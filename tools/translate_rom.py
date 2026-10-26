@@ -17,19 +17,45 @@ Implements the complete bank-by-bank translation pipeline:
    unresolved indirect paths inline with `// REQUIRES INTERPRETER FALLBACK`.
 """
 
+import argparse
+import hashlib
 import json
 import os
+import sys
 from collections import deque, defaultdict
 
-WORKSPACE_DIR = r"Z:\REA\Contra3"
-SCRATCH_DIR = r"C:\Users\Wade_\.gemini\antigravity-cli\brain\8b5589a2-f239-4ad7-8593-438cc67dcdf9\scratch"
-ROM_BIN_PATH = os.path.join(SCRATCH_DIR, "rea_ghidra_rom.bin")
-MANIFEST_PATH = os.path.join(SCRATCH_DIR, "rea_evidence_manifest.json")
-PROCS_STEP_PATH = r"C:\Users\Wade_\.gemini\antigravity-cli\brain\8b5589a2-f239-4ad7-8593-438cc67dcdf9\.system_generated\steps\279\output.txt"
-STATS_OUT_PATH = os.path.join(SCRATCH_DIR, "translation_stats.json")
+# All inputs and outputs are resolved relative to the project, so the generator is
+# reproducible from a fresh checkout plus the user's own ROM image.
+PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(PROJECT_DIR, "tools", "data")
+EXPECTED_ROM_SHA256 = "a93ea87fc835c530b5135c5294433d15eef6dbf656144b387e89ac19cf864996"
+DEFAULT_ROM_PATH = os.environ.get(
+    "CONTRA3_ROM",
+    os.path.join(os.path.dirname(PROJECT_DIR), "ROM", "Contra III - The Alien Wars (USA).sfc"))
 
-with open(ROM_BIN_PATH, "rb") as f:
+
+def _parse_args(argv):
+    ap = argparse.ArgumentParser(description="Contra III 65816 -> C11 static recompiler")
+    ap.add_argument("--rom", default=DEFAULT_ROM_PATH,
+                    help="Contra III (USA) ROM image (default: $CONTRA3_ROM or ../ROM/...sfc)")
+    ap.add_argument("--out", default=PROJECT_DIR,
+                    help="output root receiving include/contra3_recomp.h and src/*.c (default: project)")
+    ap.add_argument("--stats", default=None,
+                    help="translation_stats.json path (default: <out>/build/translation_stats.json)")
+    return ap.parse_args(argv)
+
+
+ARGS = _parse_args(sys.argv[1:] if __name__ == "__main__" else [])
+WORKSPACE_DIR = os.path.abspath(ARGS.out)
+MANIFEST_PATH = os.path.join(DATA_DIR, "rea_evidence_manifest.json")
+PROCS_STEP_PATH = os.path.join(DATA_DIR, "ghidra_procedures.json")
+STATS_OUT_PATH = ARGS.stats or os.path.join(WORKSPACE_DIR, "build", "translation_stats.json")
+
+with open(ARGS.rom, "rb") as f:
     ROM = f.read()
+_rom_sha = hashlib.sha256(ROM).hexdigest()
+if _rom_sha != EXPECTED_ROM_SHA256:
+    sys.exit(f"error: {ARGS.rom} has SHA-256 {_rom_sha}; expected Contra III (USA) {EXPECTED_ROM_SHA256}")
 
 with open(MANIFEST_PATH, "r", encoding="utf-8") as f:
     EVIDENCE_MANIFEST = json.load(f)
@@ -1428,6 +1454,7 @@ def main():
         "code_banks": bank_stats,
         "indirect_sites": indirect_export,
     }
+    os.makedirs(os.path.dirname(STATS_OUT_PATH), exist_ok=True)
     with open(STATS_OUT_PATH, "w", encoding="utf-8") as f:
         json.dump(stats, f, indent=2)
 

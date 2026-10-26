@@ -1,0 +1,877 @@
+{
+  "subject": {
+    "name": "Contra III - The Alien Wars (USA).sfc",
+    "digest": {
+      "sha256": "a93ea87fc835c530b5135c5294433d15eef6dbf656144b387e89ac19cf864996"
+    },
+    "local_path": "Z:\\REA\\ROM\\Contra III - The Alien Wars (USA).sfc",
+    "format": "raw-binary",
+    "architecture": "65816"
+  },
+  "provider": {
+    "id": "ghidra",
+    "name": "Ghidra",
+    "version": "12.1.4"
+  },
+  "analysis_profile_digest": "b8206960a91a3a66f02967ff8a0d4b0dcb4bcd055ef8398b98e0365462a5f602",
+  "list_segments_evidence_id": "ev_c4c73e28ddf02563ceeaee8ca06e0284fae013274551f3e9ce2fa2d5369f2fe0",
+  "segments": [
+    {
+      "name": "LOW_RAM",
+      "start": "0x0",
+      "end": "0x2000",
+      "readable": true,
+      "writable": true,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": false,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "SNES_IO",
+      "start": "0x2000",
+      "end": "0x6000",
+      "readable": true,
+      "writable": true,
+      "executable": false,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": false,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_00",
+      "start": "0x8000",
+      "end": "0x10000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_01",
+      "start": "0x18000",
+      "end": "0x20000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_02",
+      "start": "0x28000",
+      "end": "0x30000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_03",
+      "start": "0x38000",
+      "end": "0x40000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_04",
+      "start": "0x48000",
+      "end": "0x50000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_05",
+      "start": "0x58000",
+      "end": "0x60000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_06",
+      "start": "0x68000",
+      "end": "0x70000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_07",
+      "start": "0x78000",
+      "end": "0x80000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_08",
+      "start": "0x88000",
+      "end": "0x90000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_09",
+      "start": "0x98000",
+      "end": "0xa0000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_0A",
+      "start": "0xa8000",
+      "end": "0xb0000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_0B",
+      "start": "0xb8000",
+      "end": "0xc0000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_0C",
+      "start": "0xc8000",
+      "end": "0xd0000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_0D",
+      "start": "0xd8000",
+      "end": "0xe0000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_0E",
+      "start": "0xe8000",
+      "end": "0xf0000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_0F",
+      "start": "0xf8000",
+      "end": "0x100000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_10",
+      "start": "0x108000",
+      "end": "0x110000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_11",
+      "start": "0x118000",
+      "end": "0x120000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_12",
+      "start": "0x128000",
+      "end": "0x130000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_13",
+      "start": "0x138000",
+      "end": "0x140000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_14",
+      "start": "0x148000",
+      "end": "0x150000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_15",
+      "start": "0x158000",
+      "end": "0x160000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_16",
+      "start": "0x168000",
+      "end": "0x170000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_17",
+      "start": "0x178000",
+      "end": "0x180000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_18",
+      "start": "0x188000",
+      "end": "0x190000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_19",
+      "start": "0x198000",
+      "end": "0x1a0000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_1A",
+      "start": "0x1a8000",
+      "end": "0x1b0000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_1B",
+      "start": "0x1b8000",
+      "end": "0x1c0000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_1C",
+      "start": "0x1c8000",
+      "end": "0x1d0000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_1D",
+      "start": "0x1d8000",
+      "end": "0x1e0000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_1E",
+      "start": "0x1e8000",
+      "end": "0x1f0000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "ROM_BANK_1F",
+      "start": "0x1f8000",
+      "end": "0x200000",
+      "readable": true,
+      "writable": false,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": true,
+      "overlay": false,
+      "sections": []
+    },
+    {
+      "name": "WRAM",
+      "start": "0x7e0000",
+      "end": "0x800000",
+      "readable": true,
+      "writable": true,
+      "executable": true,
+      "permissions": {
+        "available": true,
+        "source": "ghidra-memory-block"
+      },
+      "provenance": "ghidra-memory-block",
+      "address_space": "bus",
+      "image_base": "0x0",
+      "initialized": false,
+      "overlay": false,
+      "sections": []
+    }
+  ],
+  "banks": {
+    "00": {
+      "bank": 0,
+      "ghidra_address": "0x8000",
+      "length": 32768,
+      "evidence_id": "ev_3ff4b25a4e8b3428d08ddd4914a71d771f3bf1230ae0b585d85bbc59caabf7ee",
+      "sha256": "74e83bbc3629c01a4e76c993bbdbd7bae6752365ff22aed12e6e1c3d7744f77e"
+    },
+    "01": {
+      "bank": 1,
+      "ghidra_address": "0x18000",
+      "length": 32768,
+      "evidence_id": "ev_77631fe86ccd9423a19ca4cc77c3e2f7d56008cb9ae5727f1fe471783110a903",
+      "sha256": "2761a761c9cc16d4c1a165dea028cb56550dbb4ec4401d3180c337d3c38afc55"
+    },
+    "02": {
+      "bank": 2,
+      "ghidra_address": "0x28000",
+      "length": 32768,
+      "evidence_id": "ev_cc61f21c9d6a0347d8ac54c4c67b42619aaebda82fc328213f369d63e99668b2",
+      "sha256": "4e8fc9a2814b190f446f368f2a22f446c652cd3d82791379d73f8317a7c30166"
+    },
+    "03": {
+      "bank": 3,
+      "ghidra_address": "0x38000",
+      "length": 32768,
+      "evidence_id": "ev_4019bb2c8b38ff7627ae693be7a1984fc58b897e7845b98b11fb106c6662c3c6",
+      "sha256": "5a279c39552b0db2787ab711e9908399392a78946d5f60b4fef450874ad862ba"
+    },
+    "04": {
+      "bank": 4,
+      "ghidra_address": "0x48000",
+      "length": 32768,
+      "evidence_id": "ev_0bf80c3aa2340cf6eb52429464052a6432760e6913a6b574f19eda6c369c5d04",
+      "sha256": "afa06df844004d8f47f6fa3e9554aeae1e58aaf816fc7554a91f28a283b4548a"
+    },
+    "05": {
+      "bank": 5,
+      "ghidra_address": "0x58000",
+      "length": 32768,
+      "evidence_id": "ev_df5d33da05c0af510034256c365462954b5468ae99f63a6cf915ef86cf393ded",
+      "sha256": "14d69166dd9fed0f94cad68bdf67afcfcdc742f0dc2e113801440a14994c3a37"
+    },
+    "1D": {
+      "bank": 29,
+      "ghidra_address": "0x1d8000",
+      "length": 32768,
+      "evidence_id": "ev_2bc300b36129b7289068f779d03db2a8dccd10d3a4e2792edefb3f492f074d85",
+      "sha256": "cdf795a1cf5bcc8fe020038cf920bb2a6a70268a7fcddd7f48c3ef761af7a7bd"
+    },
+    "06": {
+      "bank": 6,
+      "ghidra_address": "0x68000",
+      "length": 32768,
+      "evidence_id": "ev_b447225bbd5bda11a56aac8c5be105b9782cc4a5afb2b7122fd77abf5e941c6b",
+      "sha256": "e86626f4fdc182eb433a923f83046e0c609a6e5d88626cc72be36fe525e8223c"
+    },
+    "07": {
+      "bank": 7,
+      "ghidra_address": "0x78000",
+      "length": 32768,
+      "evidence_id": "ev_f2fd4d83c752fb4ca562bb08d8220e6572e82733dbe445a23db38a54e8257f64",
+      "sha256": "b8a0ef8dfe6b41e5d42721ceceb24915fd9e67a735615b3e9fac87177b4cd957"
+    },
+    "08": {
+      "bank": 8,
+      "ghidra_address": "0x88000",
+      "length": 32768,
+      "evidence_id": "ev_086c0bd4c943f7b241069abbfe397b247de7d5dd7e0b6a67dcdf90590a37a459",
+      "sha256": "bd58253a82bb5fc78eeb6002a20f06922e3bc725af58e3a9da8401a73a801b65"
+    },
+    "09": {
+      "bank": 9,
+      "ghidra_address": "0x98000",
+      "length": 32768,
+      "evidence_id": "ev_fe4c7313328f36060676c88fc48ff7843f3f8eb9e4c2ce281d15c8e57eb8b023",
+      "sha256": "82c0bddad05ebe445855e9d8aaa9cfe09ebc12d7cadd28164bff78f72e9551b9"
+    },
+    "0A": {
+      "bank": 10,
+      "ghidra_address": "0xa8000",
+      "length": 32768,
+      "evidence_id": "ev_d7898a8023ac117ed5d7a0d1e29f47e95e85e9eb15517a46603ec4579b0a8975",
+      "sha256": "b4dca37f6b61f470ac48f1367fb348fe8745cee237ade447c8719e8b74b55b06"
+    },
+    "0B": {
+      "bank": 11,
+      "ghidra_address": "0xb8000",
+      "length": 32768,
+      "evidence_id": "ev_10bfce9cd846cac8207542e8466cce2f38fb9120300c0995b170ffec694fde42",
+      "sha256": "2c1df67f2525015c5c42d0a42bf9dfdfe9c47c27fcdfd663936030c61378fce4"
+    },
+    "0C": {
+      "bank": 12,
+      "ghidra_address": "0xc8000",
+      "length": 32768,
+      "evidence_id": "ev_4e0b31ff468b93cb67185ed37b5bca05efc01bb34d5e28ea2d167db2e78078de",
+      "sha256": "743281332e6bbe556aaa981eae38df13c983a2ab07e36bf7dcb34696e06816b8"
+    },
+    "0D": {
+      "bank": 13,
+      "ghidra_address": "0xd8000",
+      "length": 32768,
+      "evidence_id": "ev_7fe3e39b9abd3f359f4e2cb647803afefd9d7b40658198de0802e9193af13190",
+      "sha256": "d51b8bacd010ffee887c7bc9fb02671d5500416c4f7466e3b6c37741978538eb"
+    },
+    "0E": {
+      "bank": 14,
+      "ghidra_address": "0xe8000",
+      "length": 32768,
+      "evidence_id": "ev_f3876cec532c0a5196b233454cbb863f3959ebb2f6cc203670ac22d070c92484",
+      "sha256": "01fc097d4f0686c370af115e1eaf2c7704f22f11e35cecf828fb1bca052a9bd1"
+    },
+    "0F": {
+      "bank": 15,
+      "ghidra_address": "0xf8000",
+      "length": 32768,
+      "evidence_id": "ev_fd472a34924cf3d257aefb0b590dd4ded0c5eccd6d75e073f29a1075e2a4bbb5",
+      "sha256": "f366bf06355e2633b34b939c03f722e4e714b19740bc687ad8510c130686246e"
+    },
+    "10": {
+      "bank": 16,
+      "ghidra_address": "0x108000",
+      "length": 32768,
+      "evidence_id": "ev_e7cd8755d44b0e4a9223655b180192407e710682b7211fff4a63874ffd1b7be4",
+      "sha256": "697cb953dbce6ed3f86d5c1487aec8fa67ea015c5bb0043b321897c2962c281d"
+    },
+    "11": {
+      "bank": 17,
+      "ghidra_address": "0x118000",
+      "length": 32768,
+      "evidence_id": "ev_66ed0444dc62bcd9ca270658fc15fe77cdf3456259ab47392006e2b93e4a949e",
+      "sha256": "66aaf6ecc18ccfb13cf09f6769d83a6a3d158c6e51fe13661b41d5ea50ff9cc9"
+    },
+    "12": {
+      "bank": 18,
+      "ghidra_address": "0x128000",
+      "length": 32768,
+      "evidence_id": "ev_9fde2d897ed409445e3fcc0c4060cf4fa403fc9f5741207d8c4cfbd5d6474ebd",
+      "sha256": "c2e9b3c90f6a7163720b3f1fdf96005dda2cb01eaa7409a51d8058398f459712"
+    },
+    "13": {
+      "bank": 19,
+      "ghidra_address": "0x138000",
+      "length": 32768,
+      "evidence_id": "ev_f55163fc25d7db37b17ae38c22101d9e2041c3f833721058dc6a90e2c96ca414",
+      "sha256": "11a32f1d48957dbb52fc4b81f843fce3d91c4941f49b43ec23709485c16b5799"
+    },
+    "14": {
+      "bank": 20,
+      "ghidra_address": "0x148000",
+      "length": 32768,
+      "evidence_id": "ev_f36700220fb394a93ddeffb3e2389e0aef7d4657d6b91e0ae441c5bee16529fe",
+      "sha256": "2bb2b8c7ced17dfd96243dbbc05818295bd1d71e09f03520903eedbb67f946fd"
+    },
+    "15": {
+      "bank": 21,
+      "ghidra_address": "0x158000",
+      "length": 32768,
+      "evidence_id": "ev_3a40493d3e5adc77a63f0d067ffc89a7b851041a88244395e331d135d88d8081",
+      "sha256": "421a4ee8b062a1a70d5025dd9fa304f75b959c6a1fff13809a8b3a5a00cdc390"
+    },
+    "16": {
+      "bank": 22,
+      "ghidra_address": "0x168000",
+      "length": 32768,
+      "evidence_id": "ev_60a3a6058486ca66ac6ccddac78cb7857ee90acacb46b7b53711272b4095d4f9",
+      "sha256": "8627b73ca451b3af62fe722b402ea09d0dc5dd41748fc8a225c6a4f1d9f2914d"
+    },
+    "17": {
+      "bank": 23,
+      "ghidra_address": "0x178000",
+      "length": 32768,
+      "evidence_id": "ev_8323da99427c88982e38dbf963cf56e816a64629a410b2cabf8027e67ed2d159",
+      "sha256": "93c3b1cbf1d0fb000b1b9e36de27c470f0d52ed78dc8adce3f5e5bdacd37105c"
+    },
+    "18": {
+      "bank": 24,
+      "ghidra_address": "0x188000",
+      "length": 32768,
+      "evidence_id": "ev_47f437c74d399eea0fb5c62ea70620bfb06fa372e0b923f2c11ca569fb048aaf",
+      "sha256": "af78e3e4fa0c435c873f4304b846dfe6c0368f2acde481a1b3a464a4912cfeb1"
+    },
+    "19": {
+      "bank": 25,
+      "ghidra_address": "0x198000",
+      "length": 32768,
+      "evidence_id": "ev_f754816418709cc589b17247258ab595e936c100a5659f9e329e4cd05f2bc8f7",
+      "sha256": "56e9bc0c31588127cba89b4ee95b14b7f12aea815da3e4243efb1e99ae24ddac"
+    },
+    "1A": {
+      "bank": 26,
+      "ghidra_address": "0x1a8000",
+      "length": 32768,
+      "evidence_id": "ev_963838b2d8de594bc829c8f208706ee0d768d36679ee8f0a0cba36645d73b1c3",
+      "sha256": "97fe9533fc3197d65bb3d0e0d9911a71485b0042fb1cd18a532223d90cc68adc"
+    },
+    "1B": {
+      "bank": 27,
+      "ghidra_address": "0x1b8000",
+      "length": 32768,
+      "evidence_id": "ev_8831df84aae84f6e38b1fd94ff41afe60eab4e4af29ab2dd7c5e3d87217151d7",
+      "sha256": "1a8742d423cf93eb6f03e7d0274487e3121b2d03515c444c0b9d073f48eae626"
+    },
+    "1C": {
+      "bank": 28,
+      "ghidra_address": "0x1c8000",
+      "length": 32768,
+      "evidence_id": "ev_09a5bad1f0f1ec1ce540271a4203f9fe41b167a83454028ddb0d56b99da1ed35",
+      "sha256": "58999d56816f82a2edd1d1a6d49290af4ad158cdea1e9d04b49bcd22eba76f9e"
+    },
+    "1E": {
+      "bank": 30,
+      "ghidra_address": "0x1e8000",
+      "length": 32768,
+      "evidence_id": "ev_ade9c0c685f2649c2369a5d0b6c5b5605184566503f1101246fc53769fde99fe",
+      "sha256": "dbf26f87349549eca407900563fc1bb313431c594332d0ade5be987683af95cf"
+    },
+    "1F": {
+      "bank": 31,
+      "ghidra_address": "0x1f8000",
+      "length": 32768,
+      "evidence_id": "ev_5181e2fcd60bc02e3a64e18209d730faabd4e16cd4689a9b8d0cfbab51b85e6a",
+      "sha256": "60bf4c51c642cdc2621864b92eff320101cbbcb8ef2b0f5ff877cacee6efa34a"
+    }
+  },
+  "full_rom_sha256": "a93ea87fc835c530b5135c5294433d15eef6dbf656144b387e89ac19cf864996"
+}
