@@ -106,6 +106,7 @@ static void snes_execute_mdma(SnesCpuContext *ctx, uint8_t mask) {
             }
         }
         d->das = 0u;
+        SNES_CYCLES(ctx, count + 8u); /* 8 master clocks per byte (~1 SlowROM cycle) + channel setup */
     }
 }
 
@@ -391,6 +392,7 @@ void snes_hw_write_apu(SnesCpuContext *ctx, uint16_t reg, uint8_t val) {
 
 uint8_t snes_hw_read_apu(SnesCpuContext *ctx, uint16_t reg) {
     uint8_t port = (uint8_t)((reg - 0x2140u) & 0x03u);
+    ctx->apu.read_count++;
     if (ctx->apu_core != NULL) {
         uint8_t v = snes_apu_read_port(ctx->apu_core, port);
         ctx->apu.apu_to_cpu[port] = v;
@@ -593,6 +595,7 @@ void snes_bus_write16(SnesCpuContext *ctx, uint32_t addr24, uint16_t val) {
 void snes_block_mvn(SnesCpuContext *ctx, uint8_t dst_bank, uint8_t src_bank) {
     ctx->db = dst_bank;
     uint32_t count = (uint32_t)ctx->a + 1u;
+    SNES_CYCLES(ctx, 7u * count);
     for (uint32_t i = 0u; i < count; ++i) {
         uint8_t b = snes_bus_read8(ctx, ((uint32_t)src_bank << 16) | (uint32_t)ctx->x);
         snes_bus_write8(ctx, ((uint32_t)dst_bank << 16) | (uint32_t)ctx->y, b);
@@ -610,6 +613,7 @@ void snes_block_mvn(SnesCpuContext *ctx, uint8_t dst_bank, uint8_t src_bank) {
 void snes_block_mvp(SnesCpuContext *ctx, uint8_t dst_bank, uint8_t src_bank) {
     ctx->db = dst_bank;
     uint32_t count = (uint32_t)ctx->a + 1u;
+    SNES_CYCLES(ctx, 7u * count);
     for (uint32_t i = 0u; i < count; ++i) {
         uint8_t b = snes_bus_read8(ctx, ((uint32_t)src_bank << 16) | (uint32_t)ctx->x);
         snes_bus_write8(ctx, ((uint32_t)dst_bank << 16) | (uint32_t)ctx->y, b);

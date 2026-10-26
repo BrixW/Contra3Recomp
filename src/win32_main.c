@@ -410,6 +410,7 @@ static void soft_reset(SnesCpuContext *ctx, SnesApu *apu) {
 }
 
 static bool     g_strict_fallback = false;
+static uint32_t g_lag_budget      = 0u;   /* CPU cycles per frame for the lag model (0 = off) */
 static uint32_t g_frame_number    = 0u;   /* Frames stepped since launch (for diagnostics) */
 
 /* Report every unresolved indirect target immediately, with the dispatch site and frame */
@@ -440,6 +441,7 @@ static void power_on(SnesCpuContext *ctx, SnesApu *apu, const uint8_t *rom, size
     snes_apu_attach(ctx, apu);
     ctx->on_interp_fallback = on_unresolved_jump;
     ctx->strict_fallback = g_strict_fallback;
+    ctx->lag_budget = g_lag_budget;
     ctx->max_main_loop_iters = 1u;
     bank00_func_8000(ctx);
 }
@@ -511,6 +513,11 @@ static LRESULT CALLBACK contra3_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPAR
                     }
                 } else if (wparam == VK_SPACE && g_paused) {
                     g_step_once = true;
+                } else if (wparam == VK_F3) {
+                    g_lag_budget = (g_lag_budget != 0u) ? 0u : SNES_LAG_BUDGET_DEFAULT;
+                    g_ctx.lag_budget = g_lag_budget;
+                    g_ctx.lag_debt = 0u;
+                    set_status(hwnd, g_lag_budget ? "Authentic slowdown ON (lag model)" : "Authentic slowdown OFF");
                 } else if (wparam == VK_F1) {
                     g_turbo_toggle = !g_turbo_toggle;
                 } else if (wparam == VK_F5) {
@@ -748,7 +755,7 @@ static int run_headless(const uint8_t *rom, size_t rom_size, const HeadlessOptio
             fprintf(stderr, "Error: cannot create trace '%s'\n", opt->trace_path);
         } else {
             fprintf(trace, "frame,movie_frame,pad1,pad2,state,sub,nmi_mode,stage,frame_ctr,"
-                           "p1_x,p1_y,p2_x,p2_y,lives1,lives2,cam_x,rng_lo,rng_hi,lag\n");
+                           "p1_x,p1_y,p2_x,p2_y,lives1,lives2,cam_x,rng_lo,rng_hi,lag,nmi_cycles,apu_polls\n");
         }
     }
     SnesMovieRecorder rec;
@@ -766,6 +773,10 @@ static int run_headless(const uint8_t *rom, size_t rom_size, const HeadlessOptio
     probe_sample(&g_ctx, &prev);
     uint16_t max_stage       = 0u;
     unsigned gameplay_frames = 0u;
+    uint64_t nmi_sum = 0u, nmi_samples = 0u;
+    uint32_t nmi_max = 0u, nmi_over = 0u;
+    static uint32_t nmi_hist[256];
+    memset(nmi_hist, 0, sizeof(nmi_hist));
     unsigned last_ctr_change = 0u;
     bool     hang            = false;
     unsigned state_seen      = 0u;
@@ -879,10 +890,10 @@ static int run_headless(const uint8_t *rom, size_t rom_size, const HeadlessOptio
             ProbeSample s;
             probe_sample(&g_ctx, &s);
             if (trace != NULL) {
-                fprintf(trace, "%u,%lld,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,0\n",
+                fprintf(trace, "%u,%lld,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
                         f, (long long)this_movie_frame, pad1, pad2, s.state, s.sub, s.nmi_mode, s.stage,
                         s.frame_ctr, s.p1_x, s.p1_y, s.p2_x, s.p2_y, s.lives1, s.lives2, s.cam_x,
-                        s.rng_lo, s.rng_hi);
+                        s.rng_lo, s.rng_hi, g_ctx.last_frame_lagged ? 1u : 0u, (unsigned)g_ctx.last_nmi_cycles, (unsigned)g_ctx.last_nmi_apu_polls);
             }
             if (opt->verify) {
                 if (s.state < 32u) {
@@ -890,6 +901,16 @@ static int run_headless(const uint8_t *rom, size_t rom_size, const HeadlessOptio
                 }
                 if (s.state == 0x09u) {
                     gameplay_frames++;
+                    if (!g_ctx.last_frame_lagged && prev.state == 0x09u) {
+                        uint32_t c = g_ctx.last_nmi_cycles;
+                        nmi_sum += c;
+                        nmi_samples++;
+                        nmi_max = (c > nmi_max) ? c : nmi_max;
+                        nmi_hist[(c / 1024u < 255u) ? c / 1024u : 255u]++;
+                        if (c > (g_lag_budget ? g_lag_budget : SNES_LAG_BUDGET_DEFAULT)) {
+                            nmi_over++;
+                        }
+                    }
                     if (s.stage > max_stage) {
                         max_stage = s.stage;
                     }
@@ -966,6 +987,23 @@ static int run_headless(const uint8_t *rom, size_t rom_size, const HeadlessOptio
     if (opt->verify) {
         printf("[VERIFY] gameplay frames=%u | highest stage=%u | states visited mask=$%04X | ending/credits state ($0E) %s\n",
                gameplay_frames, max_stage, state_seen, (state_seen & (1u << 0x0Eu)) ? "REACHED" : "not reached");
+        if (nmi_samples > 0u) {
+            /* 99th percentile from a 1024-cycle histogram */
+            uint64_t target = (nmi_samples * 99u + 99u) / 100u, acc = 0u;
+            unsigned p99 = 0u;
+            for (unsigned b = 0u; b < 256u; ++b) {
+                acc += nmi_hist[b];
+                if (acc >= target) {
+                    p99 = (b + 1u) * 1024u;
+                    break;
+                }
+            }
+            uint32_t budget = g_lag_budget ? g_lag_budget : SNES_LAG_BUDGET_DEFAULT;
+            printf("[VERIFY] gameplay CPU load: avg %.0f | p99 <=%u | max %u cycles per NMI | budget %u | over budget %u frames (%.2f%%) | lag frames %u%s\n",
+                   (double)nmi_sum / (double)nmi_samples, p99, nmi_max, budget, nmi_over,
+                   100.0 * (double)nmi_over / (double)nmi_samples, (unsigned)g_ctx.lag_frames,
+                   g_lag_budget ? "" : " (lag model off)");
+        }
     }
 
     printf("[HEADLESS] %u frames in %.3f s (%.1f FPS) | state=$%02X | DMA=%u | KON=%u | unresolved=%u%s\n",
@@ -1106,6 +1144,7 @@ static void print_usage(void) {
         "  --verify                  Print state/stage progress, detect hangs, summarize the run\n"
         "  --hang-frames <n>         Frames without a logic-frame tick that count as a hang (default 600)\n"
         "  --strict                  Abort with a register dump on the first unresolved indirect jump\n"
+        "  --lag-model [cycles]      Authentic slowdown: drop logic frames when an NMI overruns its CPU budget (F3)\n"
         "  --infinite-lives          Refill a player's lives when they reach the last one (soak testing)\n"
         "  --gl-selftest <prefix>    Render a Stage 1 frame through every OpenGL filter and verify readback\n");
 }
@@ -1175,6 +1214,12 @@ int main(int argc, char **argv) {
             opt.trace_path = argv[++i];
         } else if (strcmp(argv[i], "--verify") == 0) {
             opt.verify = true;
+        } else if (strcmp(argv[i], "--lag-model") == 0) {
+            /* Optional numeric budget may follow: --lag-model 45642 */
+            g_lag_budget = SNES_LAG_BUDGET_DEFAULT;
+            if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') {
+                g_lag_budget = (uint32_t)strtoul(argv[++i], NULL, 10);
+            }
         } else if (strcmp(argv[i], "--strict") == 0) {
             g_strict_fallback = true;
         } else if (strcmp(argv[i], "--infinite-lives") == 0) {

@@ -57,6 +57,12 @@ Verified end-to-end with zero compiler warnings (`gcc -std=c11 -O2 -Wall -Wextra
 3. `contra3.exe --headless 0 --movie run.bk2 --lag-from emu_trace.csv --verify --trace ours.csv`
 4. `python tools/compare_trace.py emu_trace.csv ours.csv`. The first divergence points straight at the frame (and probe) where recompiled logic or timing departs from hardware. Expect boot-time differences around the SPC700 upload handshake first; `--movie-offset` and `--offset` are there to absorb a constant shift.
 
+### A2. Calibrate the lag model (needs the same emulator trace)
+`--lag-model` already reproduces Konami's NMI busy-guard slowdown from per-instruction 65C816 cycle costs, but the 45,642-cycle budget is an estimate. Run the movie with `--lag-model` (no `--lag-from`) and use `python tools/compare_trace.py emu_trace.csv ours.csv --lag-report` to tune it. A tighter budget is very sensitive: 40,000 cycles roughly doubles the lag frames on Stage 4 2P. Once recall and precision are high, `--lag-model` can become the default and `--lag-from` unnecessary.
+
+### A3. Cycle-accurate CPU/APU synchronisation
+The SPC700 advances 24 cycles per port poll (`snes_apu_read_port`) instead of tracking `ctx->cycles`. Driving it from the CPU cycle counter would make upload handshakes, and therefore load times and force-blanked lag, take real time.
+
 ### B. Optional polish
 - **Persistent cartridge config**: save/load `ctx.wram[0x1E00..0x1FFF]` to `contra3_nvram.bin`.
 - **Restore *Contra Spirits* cheats**: expose Sound Test (`bank00_func_b2f3`), 30 Lives (`bank00_func_b346`) and Stage Select (`bank00_func_b39f`).

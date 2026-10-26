@@ -219,6 +219,74 @@ MODE_LEN = {
 }
 BRANCH_OPS = {"BPL", "BMI", "BVC", "BVS", "BCC", "BCS", "BNE", "BEQ", "BRA", "BRL"}
 
+# --- WDC 65C816 native-mode CPU cycle costs (data sheet table 5-7) ---------------------
+# Page-crossing penalties are ignored; the direct-page penalty (+1 when D.low != 0) is added
+# at runtime because Contra III points D at 64-byte actor slots. Taken branches add +1 at the
+# branch site; MVN/MVP (7 cycles per byte) and DMA are charged by the runtime.
+DP_MODES = {"dp", "dpx", "dpy", "dpi", "dpxi", "dpiy", "dpil", "dpily"}
+_ALU_READ = {"immm": 2, "dp": 3, "dpx": 4, "dpi": 5, "dpil": 6, "dpxi": 6, "dpiy": 5, "dpily": 6,
+             "abs": 4, "absx": 4, "absy": 4, "long": 5, "longx": 5, "sr": 4, "sriy": 7}
+_STA = dict(_ALU_READ, absx=5, absy=5, dpiy=6)
+_INDEX = {"immx": 2, "dp": 3, "dpx": 4, "dpy": 4, "abs": 4, "absx": 4, "absy": 4}
+_RMW = {"acc": 2, "dp": 5, "dpx": 6, "abs": 6, "absx": 7}
+_FIXED = {
+    "XBA": 3, "REP": 3, "SEP": 3, "PHB": 3, "PHK": 3, "PHP": 3, "PHD": 4,
+    "PLB": 4, "PLP": 4, "PLD": 5, "PEA": 5, "PEI": 6, "PER": 6,
+    "JSL": 8, "RTS": 6, "RTL": 6, "RTI": 7, "BRA": 3, "BRL": 4,
+    "BRK": 8, "COP": 8, "WAI": 3, "STP": 3, "MVN": 0, "MVP": 0,
+}
+
+
+def insn_cycles(mn, mode, m, x):
+    """Static cycle cost of one instruction at register widths (m, x); 1 = 8-bit."""
+    mw = 0 if m else 1
+    xw = 0 if x else 1
+    if mn in ("ORA", "AND", "EOR", "ADC", "SBC", "CMP", "LDA"):
+        return _ALU_READ.get(mode, 4) + mw
+    if mn == "BIT":
+        return {"immm": 2, "dp": 3, "dpx": 4, "abs": 4, "absx": 4}.get(mode, 4) + mw
+    if mn == "STA":
+        return _STA.get(mode, 4) + mw
+    if mn == "STZ":
+        return {"dp": 3, "dpx": 4, "abs": 4, "absx": 5}.get(mode, 4) + mw
+    if mn in ("LDX", "LDY", "CPX", "CPY", "STX", "STY"):
+        return _INDEX.get(mode, 4) + xw
+    if mn in ("ASL", "LSR", "ROL", "ROR", "INC", "DEC"):
+        return _RMW.get(mode, 6) + (0 if mode == "acc" else 2 * mw)
+    if mn in ("TSB", "TRB"):
+        return {"dp": 5, "abs": 6}.get(mode, 6) + 2 * mw
+    if mn in ("PHA",):
+        return 3 + mw
+    if mn in ("PHX", "PHY"):
+        return 3 + xw
+    if mn == "PLA":
+        return 4 + mw
+    if mn in ("PLX", "PLY"):
+        return 4 + xw
+    if mn == "JMP":
+        return {"abs": 3, "absi": 5, "absxi": 6}.get(mode, 3)
+    if mn == "JML":
+        return 6 if mode == "absil" else 4
+    if mn == "JSR":
+        return 8 if mode == "absxi" else 6
+    if mn in BRANCH_OPS:
+        return _FIXED.get(mn, 2)
+    return _FIXED.get(mn, 2)
+
+
+def cycle_stmt(mn, mode, states, indent="    "):
+    """C statement charging this instruction's cycles (M-width ternary at dynamic merge points)."""
+    costs = sorted({(sm, insn_cycles(mn, mode, sm, sx)) for sm, sx in states})
+    if len({c for _, c in costs}) == 1:
+        expr = f"{costs[0][1]}u"
+    else:
+        c8 = next(c for sm, c in costs if sm)
+        c16 = next(c for sm, c in costs if not sm)
+        expr = f"(ctx->flag_m ? {c8}u : {c16}u)"
+    if mode in DP_MODES:
+        expr = f"{expr} + SNES_DP_PENALTY(ctx)"
+    return f"{indent}SNES_CYCLES(ctx, {expr});"
+
 
 def func_cname(bank, addr16):
     return f"bank{bank & 0x1F:02x}_func_{addr16:04x}"
@@ -1147,6 +1215,7 @@ def translate_function(fb, fpc, fm, fx, reason, func_entries, indirect_sites):
         asm_text = f"{mn} {asm_op}".strip()
         m0, x0 = states[0]
         out.append(f"    /* ${fb:02X}:{pc:04X}: {hex_bytes:<11s} | {asm_text:<18s} [{mx_str(m0, x0)}] */")
+        out.append(cycle_stmt(mn, mode, states))
 
         # Control-flow instructions
         if mn == "JMP":
@@ -1227,9 +1296,9 @@ def translate_function(fb, fpc, fm, fx, reason, func_entries, indirect_sites):
             else:
                 cond = branch_cond_c(mn)
                 if tgt in pc_index:
-                    out.append(f"    if ({cond}) goto L_{tgt:04x};")
+                    out.append(f"    if ({cond}) {{ SNES_CYCLES(ctx, 1u); goto L_{tgt:04x}; }}")
                 else:
-                    out.append(f"    if ({cond}) {{ {func_cname(fb, tgt)}(ctx); return; }}")
+                    out.append(f"    if ({cond}) {{ SNES_CYCLES(ctx, 1u); {func_cname(fb, tgt)}(ctx); return; }}")
                 if npc in pc_index:
                     if npc != next_emitted_pc:
                         out.append(f"    goto L_{npc:04x};")

@@ -774,11 +774,37 @@ void snes_step_frame(SnesCpuContext *ctx, uint16_t pad1, uint16_t pad2, uint32_t
         ctx->on_read_cpu_io = ppu_frame_read_cpu_io_hook;
     }
 
-    if ((ctx->cpu_io.nmitimen & 0x80u) != 0u) {
+    /*
+     * Lag model: when the previous NMI's work overran its frame, this frame's NMI lands
+     * while the game is still busy. Konami's re-entrancy guard ($00:81C6, $003C != 0)
+     * returns immediately, so no game logic runs and the joypad is not read; the PPU
+     * still scans out the unchanged state. The overrun is paid down one frame at a time.
+     */
+    bool lagged = ctx->lag_budget != 0u && ctx->lag_debt != 0u;
+    ctx->last_frame_lagged = lagged;
+    if (lagged) {
+        ctx->lag_debt = (ctx->lag_debt > ctx->lag_budget) ? (ctx->lag_debt - ctx->lag_budget) : 0u;
+        ctx->lag_frames++;
+    } else if ((ctx->cpu_io.nmitimen & 0x80u) != 0u) {
         uint8_t saved_pb = ctx->pb;
+        uint64_t start = ctx->cycles;
+        uint32_t polls_start = ctx->apu.read_count;
         ctx->pb = 0x00u;
         bank00_func_819b(ctx);
         ctx->pb = saved_pb;
+        uint64_t used = ctx->cycles - start;
+        ctx->last_nmi_cycles = (used > 0xFFFFFFFFull) ? 0xFFFFFFFFu : (uint32_t)used;
+        ctx->last_nmi_apu_polls = ctx->apu.read_count - polls_start;
+        /*
+         * Only visible frames lag. Loading code runs with the display force-blanked and is
+         * dominated by SPC700 upload handshakes, whose duration is not cycle-accurate yet
+         * (the APU advances per port poll, not per CPU cycle), so load time is not modelled.
+         */
+        uint8_t inidisp = ctx->ppu.regs[0x00u];
+        bool displayed = (inidisp & 0x80u) == 0u && (inidisp & 0x0Fu) != 0u;
+        if (ctx->lag_budget != 0u && displayed && ctx->last_nmi_cycles > ctx->lag_budget) {
+            ctx->lag_debt = ctx->last_nmi_cycles - ctx->lag_budget;
+        }
     }
 
     ctx->on_read_cpu_io = prev_hook;
@@ -787,8 +813,9 @@ void snes_step_frame(SnesCpuContext *ctx, uint16_t pad1, uint16_t pad2, uint32_t
     }
     g_active_render_buf = NULL;
 
-    /* Run background decompression / SPC700 streaming worker slices between VBlanks */
-    for (unsigned slice = 0u; slice < 8u; ++slice) {
+    /* Run background decompression / SPC700 streaming worker slices between VBlanks
+       (the CPU has no spare time for it while a lag frame is still running game logic) */
+    for (unsigned slice = 0u; slice < (lagged ? 0u : 8u); ++slice) {
         bank00_func_995a(ctx);
         /* Also advance non-NMI background tile/LZSS streams if active ($1300/$1340) */
         if (snes_bus_read16(ctx, 0x000052u) != 0x00FFu) {

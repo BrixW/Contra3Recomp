@@ -37,6 +37,7 @@ typedef struct Scenario {
     uint32_t poke_addr[MAX_POKES];
     uint16_t poke_val[MAX_POKES];
     bool     infinite_lives;
+    bool     lag_model;
 } Scenario;
 
 static SnesCpuContext g_ctx;
@@ -71,7 +72,9 @@ static bool parse_scenario(const char *line, Scenario *sc) {
     }
     for (char *tok = strtok(rest, " \t\r"); tok != NULL; tok = strtok(NULL, " \t\r")) {
         unsigned f = 0u, a = 0u, v = 0u;
-        if (strcmp(tok, "infinite-lives") == 0) {
+        if (strcmp(tok, "lag-model") == 0) {
+            sc->lag_model = true;
+        } else if (strcmp(tok, "infinite-lives") == 0) {
             sc->infinite_lives = true;
         } else if (sscanf(tok, "poke=%u:%x=%x", &f, &a, &v) == 3 && sc->num_pokes < MAX_POKES) {
             sc->poke_frame[sc->num_pokes] = f;
@@ -112,6 +115,7 @@ static int run_scenario(const Scenario *sc, const char *golden_dir, const uint8_
     snes_apu_init(&g_apu);
     snes_apu_attach(&g_ctx, &g_apu);
     g_ctx.max_main_loop_iters = 1u;
+    g_ctx.lag_budget = sc->lag_model ? SNES_LAG_BUDGET_DEFAULT : 0u;
     bank00_func_8000(&g_ctx);
 
     uint16_t prev_lives[2] = { 0u, 0u };
@@ -127,7 +131,8 @@ static int run_scenario(const Scenario *sc, const char *golden_dir, const uint8_
             snes_apu_init(&g_apu);
             snes_apu_attach(&g_ctx, &g_apu);
             g_ctx.max_main_loop_iters = 1u;
-            bank00_func_8000(&g_ctx);
+            g_ctx.lag_budget = sc->lag_model ? SNES_LAG_BUDGET_DEFAULT : 0u;
+    bank00_func_8000(&g_ctx);
         } else if ((flags & SNES_MOVIE_FLAG_RESET) != 0u) {
             snes_apu_clear_samples(&g_apu);
             g_ctx.main_loop_iters = 0u;
@@ -202,9 +207,9 @@ static int run_scenario(const Scenario *sc, const char *golden_dir, const uint8_
     fclose(golden);
     snes_movie_free(&movie);
     if (rc == 0) {
-        printf("[%s] %-22s %6u frames, %3u checkpoints, final state=$%02X stage=%u\n",
+        printf("[%s] %-22s %6u frames, %3u checkpoints, final state=$%02X stage=%u, lag frames=%u\n",
                update ? "REC " : "PASS", sc->name, sc->frames, checkpoints,
-               snes_bus_read8(&g_ctx, 0x000032u), snes_bus_read16(&g_ctx, 0x000086u));
+               snes_bus_read8(&g_ctx, 0x000032u), snes_bus_read16(&g_ctx, 0x000086u), (unsigned)g_ctx.lag_frames);
     }
     return rc;
 }

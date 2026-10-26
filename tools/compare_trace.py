@@ -36,6 +36,32 @@ def load(path, drop_lag):
     return rows
 
 
+def lag_report(args):
+    ref = load(args.reference, drop_lag=False)
+    ours = load(args.recomp, drop_lag=False)
+    n = min(len(ref), len(ours))
+    if n == 0:
+        print("error: no overlapping rows", file=sys.stderr)
+        return 2
+    rl = [ref[i].get("lag", "0") == "1" for i in range(n)]
+    ol = [ours[i].get("lag", "0") == "1" for i in range(n)]
+    both = sum(1 for a, b in zip(rl, ol) if a and b)
+    print(f"frames compared: {n}")
+    print(f"lag frames: reference {sum(rl)} | recomp {sum(ol)} | on the same frame {both}")
+    if sum(rl):
+        print(f"recall (reference lag frames the model reproduced): {100.0 * both / sum(rl):.1f}%")
+    if sum(ol):
+        print(f"precision (model lag frames that are real):          {100.0 * both / sum(ol):.1f}%")
+    print(f"\nper-{args.window}-frame windows (reference / recomp lag frames):")
+    for w in range(0, n, args.window):
+        a, b = sum(rl[w:w + args.window]), sum(ol[w:w + args.window])
+        if a or b:
+            print(f"  frames {w + 1:>7}-{min(w + args.window, n):>7}: {a:5} / {b:5}")
+    print("\nIf the recomp lags consistently less than the reference, the budget is too generous: lower it "
+          "(contra3.exe --lag-model <cycles>, default 45642); if it lags more, raise it.")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("reference", help="emulator trace CSV (tools/emu_trace.lua)")
@@ -47,7 +73,14 @@ def main():
     ap.add_argument("--keep-lag", action="store_true", help="do not drop reference lag frames")
     ap.add_argument("--context", type=int, default=4, help="rows of context around the first divergence")
     ap.add_argument("--max-report", type=int, default=10, help="divergent rows to list")
+    ap.add_argument("--lag-report", action="store_true",
+                    help="calibrate the lag model: compare per-frame lag flags of an emulator trace with a "
+                         "contra3.exe --lag-model trace (run without --lag-from so frames stay wall-clock aligned)")
+    ap.add_argument("--window", type=int, default=600, help="frames per window in --lag-report")
     args = ap.parse_args()
+
+    if args.lag_report:
+        return lag_report(args)
 
     ref = load(args.reference, drop_lag=not args.keep_lag)
     ours = load(args.recomp, drop_lag=False)

@@ -77,6 +77,7 @@ typedef struct SnesApuState {
     bool     auto_handshake;      /* Emulate Konami SPC700 IPL ($AA/$BB) + echo protocol */
     uint8_t  boot_phase;          /* IPL boot handshake state tracker */
     uint32_t write_count;         /* Diagnostic count of APU port writes */
+    uint32_t read_count;          /* Count of APU port reads (handshake polls) */
 } SnesApuState;
 
 /*

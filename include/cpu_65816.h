@@ -68,8 +68,31 @@ typedef struct SnesCpuContext {
     uint32_t last_unresolved_addr;/* Most recent unresolved 24-bit target */
     uint32_t last_unresolved_site;/* 24-bit address of the indirect JMP/JSR/JML that missed */
     bool     strict_fallback;     /* Abort with a register dump on the first unresolved target */
+
+    /* CPU time model (65C816 cycles; see SNES_CYCLES in generated code) */
+    uint64_t cycles;              /* Running total of estimated CPU cycles (instructions + DMA + MVN/MVP) */
+    uint32_t last_nmi_cycles;     /* Cycles consumed by the most recent serviced NMI (game logic frame) */
+    uint32_t last_nmi_apu_polls;  /* APU port reads during that NMI (SPC700 upload handshakes) */
+    uint32_t lag_budget;          /* CPU cycles per frame; 0 disables the lag model (every NMI serviced) */
+    uint32_t lag_debt;            /* Work still running past the frame boundary (cycles) */
+    uint32_t lag_frames;          /* Frames whose NMI found the game busy ($003C guard) */
+    bool     last_frame_lagged;   /* The most recent snes_step_frame was a lag frame */
     struct SnesApu *apu_core;     /* Optional live Sony S-SMP (SPC700) + S-DSP audio core */
 } SnesCpuContext;
+
+/*
+ * Cycle accounting emitted by tools/translate_rom.py before every instruction.
+ * SNES_DP_PENALTY adds the extra cycle for direct-page addressing when D.low != 0.
+ */
+#define SNES_CYCLES(ctx, n)     ((ctx)->cycles += (uint64_t)(n))
+#define SNES_DP_PENALTY(ctx)    ((((ctx)->dp & 0x00FFu) != 0u) ? 1u : 0u)
+
+/*
+ * Default lag budget: one NTSC frame is 357,368 master clocks, minus DRAM refresh
+ * (262 lines x 40). Contra III is SlowROM, and a typical instruction cycle mixes
+ * 8-clock ROM/WRAM accesses with 6-clock internal cycles, so ~7.6 clocks per CPU cycle.
+ */
+#define SNES_LAG_BUDGET_DEFAULT 45642u
 
 /* Lifecycle & Bus Routines (implemented in src/snes_runtime.c) */
 void     snes_context_init(SnesCpuContext *ctx, const uint8_t *rom, size_t rom_size);

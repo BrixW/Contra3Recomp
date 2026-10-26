@@ -121,6 +121,7 @@ If none is found when launching the desktop app, it opens a file picker. Images 
 
 ### Application Hotkeys
 - `Tab` (hold) / `F1` (toggle): Uncapped Turbo Fast-Forward
+- `F3`: Toggle authentic slowdown (the CPU-time lag model, see below)
 - `F6`: Start / stop recording an input movie (`contra3_rec_XXXX.c3m`; recording power-cycles the console so the movie replays from power-on)
 - `F9`: Cycle OpenGL filter (Sharp-Bilinear -> Nearest -> CRT)
 - `F10`: Toggle integer scaling (OpenGL)
@@ -151,7 +152,7 @@ If none is found when launching the desktop app, it opens a file picker. Images 
   --dump "1350:stage1.bmp" `
   --wav "contra3_stage1.wav"
 ```
-Run `contra3.exe --help` for the full list. Additional harness options: `--press2` (Player 2 script), `--poke <frame>:<addr>=<hex16>` (WRAM write, e.g. stage warp `--poke 800:0086=5`), `--infinite-lives`, `--strict` (abort with a register dump on the first unresolved indirect jump), `--record <file.c3m>`, `--trace <file.csv>`, `--verify` (state/stage progress log + hang detector, `--hang-frames`), and `--movie` / `--movie-offset` / `--lag-from` (see below). Exit status: `0` clean, `2` unresolved indirect jump, `3` `--strict` abort, `4` hang. Every unresolved jump is also logged immediately to stderr and `contra3_fallback.log` with its frame number and dispatch site.
+Run `contra3.exe --help` for the full list. Additional harness options: `--press2` (Player 2 script), `--poke <frame>:<addr>=<hex16>` (WRAM write, e.g. stage warp `--poke 800:0086=5`), `--infinite-lives`, `--lag-model [cycles]` (authentic slowdown), `--strict` (abort with a register dump on the first unresolved indirect jump), `--record <file.c3m>`, `--trace <file.csv>`, `--verify` (state/stage progress log + hang detector, `--hang-frames`), and `--movie` / `--movie-offset` / `--lag-from` (see below). Exit status: `0` clean, `2` unresolved indirect jump, `3` `--strict` abort, `4` hang. Every unresolved jump is also logged immediately to stderr and `contra3_fallback.log` with its frame number and dispatch site.
 
 ### Input Movies & Emulator Co-Simulation
 ```powershell
@@ -168,7 +169,12 @@ python .\tools\compare_trace.py emu_trace.csv ours.csv
 # All-stage soak (stages 1-6, 1P + 2P, deterministic input bot, ~2 hours of gameplay in about a minute)
 python .\tools\soak_all_stages.py --frames 36000
 ```
-The recompilation services every NMI, so it never lags. Real hardware drops frames when Konami's NMI logic overruns (the `$003C` re-entrancy guard), and the joypad input on those frames is ignored. Skipping the emulator's lag frames (`--lag-from`) therefore keeps the input aligned with the game's logic frames.
+### Authentic Slowdown (`--lag-model`, `F3`)
+Every generated instruction charges its WDC 65C816 cycle cost (`SNES_CYCLES`): M/X width, the direct-page penalty, taken branches, MVN/MVP and DMA are all included. With `--lag-model`, an NMI whose game logic exceeds the frame budget (45,642 CPU cycles by default, about one NTSC frame at SlowROM speed) makes the following NMIs hit Konami's `$003C` busy guard. Those are lag frames: no game logic runs and no input is read, just as on hardware. `--verify` prints the per-frame CPU load (average 25–33k cycles in normal Stage 1/2/4 play). The `nmi_cycles`, `apu_polls` and `lag` trace columns show it frame by frame.
+
+Limits: only frames with the display on can lag, because SPC700 upload time isn't cycle-accurate yet (the APU advances per port poll, not per CPU cycle). The budget hasn't been calibrated against hardware either, which is why the model is off by default. Calibrate it with an emulator trace: `contra3.exe --headless 0 --movie run.bk2 --lag-model --trace ours.csv`, then `python tools\compare_trace.py emu_trace.csv ours.csv --lag-report`.
+
+The recompilation without `--lag-model` services every NMI, so it never lags. Real hardware drops frames when Konami's NMI logic overruns (the `$003C` re-entrancy guard), and the joypad input on those frames is ignored. Skipping the emulator's lag frames (`--lag-from`) therefore keeps the input aligned with the game's logic frames.
 
 ---
 
