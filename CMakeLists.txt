@@ -39,3 +39,8 @@ enable_testing()
 add_executable(contra3_smoke_test tests/smoke_test.c)
 target_link_libraries(contra3_smoke_test PRIVATE contra3_recomp)
 add_test(NAME contra3_smoke_test COMMAND contra3_smoke_test)
+
+add_executable(contra3_replay_test tests/replay_test.c)
+target_link_libraries(contra3_replay_test PRIVATE contra3_recomp)
+add_test(NAME contra3_replay_test
+         COMMAND contra3_replay_test --golden ${CMAKE_CURRENT_SOURCE_DIR}/tests/golden)

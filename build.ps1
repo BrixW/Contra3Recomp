@@ -62,3 +62,14 @@ if (Test-Path $TestSrc) {
     & $TestExe
     if ($LASTEXITCODE -ne 0) { throw "Smoke test execution failed" }
 }
+
+$ReplaySrc = Join-Path $RootDir "tests\replay_test.c"
+if (Test-Path $ReplaySrc) {
+    $ReplayExe = Join-Path $BuildDir "contra3_replay_test.exe"
+    Write-Host "[LD] build/contra3_replay_test.exe"
+    & $Gcc -std=c11 -O2 -Wall -Wextra -Werror -I"$RootDir\include" $ReplaySrc $LibPath -o $ReplayExe
+    if ($LASTEXITCODE -ne 0) { throw "Replay test build failed" }
+    Write-Host "[RUN] contra3_replay_test.exe (golden state hashes)"
+    & $ReplayExe --golden (Join-Path $RootDir "tests\golden")
+    if ($LASTEXITCODE -ne 0) { throw "Golden replay regression detected (if intentional: contra3_replay_test.exe --update)" }
+}
