@@ -42,6 +42,7 @@
 #include "snes_ppu.h"
 #include "snes_apu.h"
 #include "snes_movie.h"
+#include "snes_savestate.h"
 #include "win32_gl.h"
 
 /* Minimal XInput structures for zero-dependency dynamic controller support */
@@ -280,48 +281,14 @@ static uint8_t *load_rom_file(const char *path, size_t *out_size) {
     return buf;
 }
 
-static bool save_quicksave(const char *path, const SnesCpuContext *ctx, const SnesApu *apu) {
-    FILE *fp = fopen(path, "wb");
-    if (fp == NULL) {
-        return false;
-    }
-    bool ok = (fwrite(ctx, sizeof(*ctx), 1u, fp) == 1u) &&
-              (apu == NULL || fwrite(apu, sizeof(*apu), 1u, fp) == 1u);
-    fclose(fp);
-    return ok;
-}
+/* Short-lived status line shown in the title bar (save/load results, recording) */
+static char  g_status[128];
+static DWORD g_status_until = 0u;
 
-static bool load_quicksave(const char *path, SnesCpuContext *ctx, SnesApu *apu) {
-    FILE *fp = fopen(path, "rb");
-    if (fp == NULL) {
-        return false;
-    }
-    const uint8_t *saved_rom  = ctx->rom;
-    size_t saved_rom_size     = ctx->rom_size;
-    SnesMmioWriteHook wp      = ctx->on_write_ppu;
-    SnesMmioReadHook  rp      = ctx->on_read_ppu;
-    SnesMmioWriteHook wc      = ctx->on_write_cpu_io;
-    SnesMmioReadHook  rc      = ctx->on_read_cpu_io;
-    SnesInterpFallbackHook fb = ctx->on_interp_fallback;
-    struct SnesApu *saved_apu = ctx->apu_core;
-
-    bool ok = fread(ctx, sizeof(*ctx), 1u, fp) == 1u;
-    if (ok && apu != NULL) {
-        if (fread(apu, sizeof(*apu), 1u, fp) == 1u) {
-            snes_apu_clear_samples(apu);
-        }
-    }
-    fclose(fp);
-
-    ctx->rom                = saved_rom;
-    ctx->rom_size           = saved_rom_size;
-    ctx->on_write_ppu       = wp;
-    ctx->on_read_ppu        = rp;
-    ctx->on_write_cpu_io    = wc;
-    ctx->on_read_cpu_io     = rc;
-    ctx->on_interp_fallback = fb;
-    ctx->apu_core           = saved_apu;
-    return ok;
+static void set_status(HWND hwnd, const char *msg) {
+    snprintf(g_status, sizeof(g_status), "%s", msg);
+    g_status_until = GetTickCount() + 4000u;
+    SetWindowTextA(hwnd, msg);
 }
 
 static uint16_t poll_xinput_pad(DWORD index) {
@@ -510,7 +477,7 @@ static void toggle_recording(HWND hwnd) {
             snprintf(msg, sizeof(msg), "Could not create %s", name);
         }
     }
-    SetWindowTextA(hwnd, msg);
+    set_status(hwnd, msg);
 }
 
 static LRESULT CALLBACK contra3_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
@@ -560,12 +527,20 @@ static LRESULT CALLBACK contra3_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPAR
                 } else if (wparam == VK_F1) {
                     g_turbo_toggle = !g_turbo_toggle;
                 } else if (wparam == VK_F5) {
-                    save_quicksave("contra3_quicksave.state", &g_ctx, &g_apu);
+                    SnesSavestateResult r = snes_savestate_save("contra3_quicksave.state", &g_ctx, &g_apu);
+                    char msg[128];
+                    snprintf(msg, sizeof(msg), r == SNES_SAVESTATE_OK ? "State saved" : "Save failed: %s",
+                             snes_savestate_result_str(r));
+                    set_status(hwnd, msg);
                 } else if (wparam == VK_F7) {
                     if (g_waveout != NULL) {
                         waveOutReset(g_waveout);
                     }
-                    load_quicksave("contra3_quicksave.state", &g_ctx, &g_apu);
+                    SnesSavestateResult r = snes_savestate_load("contra3_quicksave.state", &g_ctx, &g_apu);
+                    char msg[128];
+                    snprintf(msg, sizeof(msg), r == SNES_SAVESTATE_OK ? "State loaded" : "Load refused: %s",
+                             snes_savestate_result_str(r));
+                    set_status(hwnd, msg);
                 } else if (wparam == VK_F8) {
                     /* Grant 30 lives to active 1P ($1F8A) & config ($1E3C) */
                     snes_bus_write16(&g_ctx, 0x001E3Cu, 0x001Eu);
@@ -1412,7 +1387,7 @@ int main(int argc, char **argv) {
             } else if (g_recorder.fp != NULL) {
                 snprintf(movie_note, sizeof(movie_note), " [REC %u]", (unsigned)g_recorder.frames);
             }
-            char title[256];
+            char title[384];
             snprintf(title, sizeof(title),
                      "Contra III: The Alien Wars [C11 Recomp] | %.1f FPS%s%s%s | %s%s | State:$%02X | Unresolved:%u",
                      fps,
@@ -1423,6 +1398,10 @@ int main(int argc, char **argv) {
                      (g_use_gl && g_integer_scale) ? " Int" : "",
                      snes_bus_read8(&g_ctx, PROBE_GAME_STATE),
                      g_ctx.unresolved_jumps);
+            if (g_status[0] != '\0' && (LONG)(GetTickCount() - g_status_until) < 0) {
+                size_t len = strlen(title);
+                snprintf(title + len, sizeof(title) - len, " | %s", g_status);
+            }
             SetWindowTextA(hwnd, title);
             fps_timer = now;
             frames_this_sec = 0u;

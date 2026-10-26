@@ -16,6 +16,7 @@ add_library(contra3_recomp STATIC
     src/snes_ppu.c
     src/snes_apu.c
     src/snes_movie.c
+    src/snes_savestate.c
     src/bank_00.c
     src/bank_01.c
     src/bank_02.c

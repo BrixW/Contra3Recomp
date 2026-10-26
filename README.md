@@ -51,6 +51,7 @@ Portable C11 static recompilation and standalone Win32 desktop executable for **
 | `src/snes_runtime.c` | Portable SNES LoROM memory bus, hardware 8x8 multiply & 16/8 divide, General DMA (`MDMAEN`), `MVN`/`MVP`, and fallback dispatcher |
 | `src/snes_ppu.c` | Full SNES S-PPU1/S-PPU2 scanline software rasterizer (Modes `0–7`, OAM, HDMA, dual windows, color math, V-IRQ splits) |
 | `src/snes_apu.c` | Zero-dependency C11 Sony `SPC700` (all `256` opcodes + 64-byte IPL ROM + 3 timers) & 8-voice BRR/Gaussian/Echo `S-DSP` |
+| `src/snes_savestate.c` | Versioned save states: magic, format version, struct-layout fingerprint, ROM + payload checksums, staged load, atomic write |
 | `src/snes_movie.c` | Portable C11 movie decoders (Snes9x SMV, BizHawk BK2 zip/DEFLATE, native C3M) and C3M recorder |
 | `src/win32_main.c` | Win32 interactive desktop runner (OpenGL/GDI + `48 kHz` Catmull-Rom upsampled `waveOut` stereo + dynamic `XInput`), movie playback/recording, and the `--headless` / `--trace` / `--verify` CLI harness |
 | `src/win32_gl.c` | OpenGL 3.3 Core presenter (`wglCreateContextAttribsARB`, GLSL Sharp-Bilinear / Nearest / CRT filters, integer scaling, VSync) |
@@ -119,7 +120,7 @@ ctest --test-dir build-cmake --output-on-failure
 - `F10`: Toggle integer scaling (OpenGL)
 - `P` / `Pause`: Pause emulation (`Space` advances 1 single frame while paused)
 - `M`: Mute / Unmute live stereo audio
-- `F5` / `F7`: Quick Save / Quick Load state (`contra3_quicksave.state`, including full CPU + PPU + SPC700/S-DSP state)
+- `F5` / `F7`: Quick Save / Quick Load state (`contra3_quicksave.state`, full CPU + PPU + SPC700/S-DSP state). States are versioned (`src/snes_savestate.c`): a file from an incompatible build, another ROM, or a truncated/corrupt write is refused with a reason in the title bar and never touches the running game.
 - `F8`: Activate 30-Lives cheat (`0x001E` -> `$1E3C` & `$1F8A`)
 - `F11` / `Alt+Enter`: Toggle borderless fullscreen
 - `F12`: Save `.bmp` screenshot (`contra3_shot_XXXX.bmp`)

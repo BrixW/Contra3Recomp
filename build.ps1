@@ -18,6 +18,7 @@ $Sources = @(
     "snes_ppu",
     "snes_apu",
     "snes_movie",
+    "snes_savestate",
     "bank_00",
     "bank_01",
     "bank_02",

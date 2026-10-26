@@ -10,6 +10,7 @@
 #include "snes_ppu.h"
 #include "snes_apu.h"
 #include "snes_movie.h"
+#include "snes_savestate.h"
 
 #define TEST_ASSERT(cond, msg)                                                      \
     do {                                                                            \
@@ -276,6 +277,83 @@ int main(int argc, char **argv) {
         snes_movie_free(&mv);
         printf("[PASS] Input movie decoders verified: DEFLATE %zu -> %zu bytes, 60-frame BK2 log, C3M reset flag.\n",
                sizeof(k_bk2_log_deflate), n);
+    }
+
+    /* 10. Versioned save states: round trip, corruption / version / ROM rejection, live state untouched */
+    {
+        static SnesCpuContext st_ctx, st_probe;
+        static SnesApu        st_apu, st_apu_probe;
+        const char *path = "contra3_smoke_test.state";
+        snes_context_init(&st_ctx, rom, rom_size);
+        snes_apu_init(&st_apu);
+        snes_apu_attach(&st_ctx, &st_apu);
+        st_ctx.max_main_loop_iters = 1u;
+        bank00_func_8000(&st_ctx);
+        for (unsigned f = 0u; f < 120u; ++f) {
+            snes_step_frame(&st_ctx, 0u, 0u, NULL);
+        }
+        snes_apu_clear_samples(&st_apu);
+        TEST_ASSERT(snes_savestate_save(path, &st_ctx, &st_apu) == SNES_SAVESTATE_OK, "Save state written");
+
+        /* Advance, then restore: WRAM, VRAM and ARAM must match the saved frame exactly */
+        memcpy(&st_probe, &st_ctx, sizeof(st_probe));
+        memcpy(&st_apu_probe, &st_apu, sizeof(st_apu_probe));
+        for (unsigned f = 0u; f < 60u; ++f) {
+            snes_step_frame(&st_ctx, 0u, 0u, NULL);
+        }
+        TEST_ASSERT(memcmp(st_ctx.wram, st_probe.wram, sizeof(st_ctx.wram)) != 0, "Machine advanced after save");
+        TEST_ASSERT(snes_savestate_load(path, &st_ctx, &st_apu) == SNES_SAVESTATE_OK, "Save state loaded");
+        TEST_ASSERT(memcmp(st_ctx.wram, st_probe.wram, sizeof(st_ctx.wram)) == 0 &&
+                    memcmp(st_ctx.ppu.vram, st_probe.ppu.vram, sizeof(st_ctx.ppu.vram)) == 0 &&
+                    memcmp(st_apu.ram, st_apu_probe.ram, sizeof(st_apu.ram)) == 0 &&
+                    st_ctx.rom == rom && st_ctx.apu_core == &st_apu, "Round trip restores state and keeps host pointers");
+
+        /* Rejections must leave the running machine untouched */
+        size_t sz = 0u;
+        uint8_t *img = load_rom_image(path, &sz);
+        TEST_ASSERT(img != NULL && sz > 64u, "Save state readable");
+        for (unsigned f = 0u; f < 30u; ++f) {
+            snes_step_frame(&st_ctx, 0u, 0u, NULL);
+        }
+        memcpy(&st_probe, &st_ctx, sizeof(st_probe));
+        static const struct { size_t off; int kind; SnesSavestateResult want; } cases[] = {
+            { 0u,  0, SNES_SAVESTATE_CORRUPT },          /* truncated payload */
+            { 0u,  1, SNES_SAVESTATE_CORRUPT },          /* flipped payload byte */
+            { 8u,  2, SNES_SAVESTATE_VERSION_MISMATCH }, /* bumped format version */
+            { 0u,  3, SNES_SAVESTATE_NOT_A_SAVESTATE },  /* bad magic */
+        };
+        for (size_t c = 0u; c < sizeof(cases) / sizeof(cases[0]); ++c) {
+            FILE *fp = fopen(path, "wb");
+            TEST_ASSERT(fp != NULL, "Rewrite save state");
+            if (cases[c].kind == 0) {
+                fwrite(img, 1u, sz / 2u, fp);
+            } else {
+                uint8_t keep = 0u;
+                size_t at = (cases[c].kind == 1) ? sz - 100u : (cases[c].kind == 2) ? 8u : 0u;
+                keep = img[at];
+                img[at] ^= 0x5Au;
+                fwrite(img, 1u, sz, fp);
+                img[at] = keep;
+            }
+            fclose(fp);
+            SnesSavestateResult r = snes_savestate_load(path, &st_ctx, &st_apu);
+            TEST_ASSERT(r == cases[c].want, "Damaged save state rejected with the right reason");
+            TEST_ASSERT(memcmp(&st_ctx, &st_probe, sizeof(st_ctx)) == 0, "Rejected load left the machine untouched");
+        }
+        /* A different ROM image is refused */
+        FILE *fp = fopen(path, "wb");
+        fwrite(img, 1u, sz, fp);
+        fclose(fp);
+        uint8_t *other = (uint8_t *)malloc(rom_size);
+        memcpy(other, rom, rom_size);
+        other[0x10000] ^= 0xFFu;
+        st_ctx.rom = other;
+        TEST_ASSERT(snes_savestate_load(path, &st_ctx, &st_apu) == SNES_SAVESTATE_ROM_MISMATCH, "Foreign-ROM state refused");
+        st_ctx.rom = rom;
+        free(other);
+        free(img);
+        remove(path);
+        printf("[PASS] Save states verified: round trip exact, truncated / corrupt / version / magic / ROM mismatches rejected.\n");
     }
 
     free(rom);
