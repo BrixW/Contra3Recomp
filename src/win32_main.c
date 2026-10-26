@@ -31,6 +31,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <mmsystem.h>
+#include <commdlg.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,6 +44,7 @@
 #include "snes_apu.h"
 #include "snes_movie.h"
 #include "snes_savestate.h"
+#include "snes_rom.h"
 #include "win32_gl.h"
 
 /* Minimal XInput structures for zero-dependency dynamic controller support */
@@ -252,33 +254,18 @@ static void init_xinput(void) {
     }
 }
 
-static uint8_t *load_rom_file(const char *path, size_t *out_size) {
-    FILE *fp = fopen(path, "rb");
-    if (fp == NULL) {
-        return NULL;
-    }
-    if (fseek(fp, 0, SEEK_END) != 0) {
-        fclose(fp);
-        return NULL;
-    }
-    long sz = ftell(fp);
-    if (sz <= 0 || fseek(fp, 0, SEEK_SET) != 0) {
-        fclose(fp);
-        return NULL;
-    }
-    uint8_t *buf = (uint8_t *)malloc((size_t)sz);
-    if (buf == NULL) {
-        fclose(fp);
-        return NULL;
-    }
-    if (fread(buf, 1u, (size_t)sz, fp) != (size_t)sz) {
-        free(buf);
-        fclose(fp);
-        return NULL;
-    }
-    fclose(fp);
-    *out_size = (size_t)sz;
-    return buf;
+/* Ask for the ROM interactively when none was given and none was found (desktop launch) */
+static bool prompt_for_rom(char *out, size_t out_len) {
+    OPENFILENAMEA ofn;
+    memset(&ofn, 0, sizeof(ofn));
+    out[0] = '\0';
+    ofn.lStructSize = sizeof(ofn);
+    ofn.lpstrFilter = "SNES ROM (*.sfc;*.smc)\0*.sfc;*.smc\0All files\0*.*\0";
+    ofn.lpstrFile   = out;
+    ofn.nMaxFile    = (DWORD)out_len;
+    ofn.lpstrTitle  = "Select Contra III: The Alien Wars (USA) ROM";
+    ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    return GetOpenFileNameA(&ofn) != 0;
 }
 
 /* Short-lived status line shown in the title bar (save/load results, recording) */
@@ -1100,7 +1087,7 @@ static int run_gl_selftest(const uint8_t *rom, size_t rom_size, const char *pref
 static void print_usage(void) {
     printf(
         "Usage: contra3.exe [rom.sfc] [options]\n"
-        "  --rom <path>              ROM image (default Z:/REA/ROM/Contra III - The Alien Wars (USA).sfc)\n"
+        "  --rom <path>              ROM image (default: $CONTRA3_ROM, then next to the exe, then ../ROM or ../../ROM)\n"
         "  --gdi                     Force the GDI presenter instead of OpenGL 3.3\n"
         "  --vsync                   Enable OpenGL swap-interval VSync\n"
         "  --filter <sharp|nearest|crt>  OpenGL filter (F9 cycles at runtime)\n"
@@ -1124,7 +1111,7 @@ static void print_usage(void) {
 }
 
 int main(int argc, char **argv) {
-    const char *rom_path = "Z:/REA/ROM/Contra III - The Alien Wars (USA).sfc";
+    const char *rom_path = NULL;
     const char *movie_path = NULL;
     const char *lag_path = NULL;
     bool headless = false;
@@ -1216,11 +1203,30 @@ int main(int argc, char **argv) {
         }
     }
 
+    /* Resolve the ROM: argument / drag-and-drop, $CONTRA3_ROM, standard locations, then a file dialog */
+    static char found_rom[MAX_PATH];
+    if (rom_path == NULL) {
+        char exe_path[MAX_PATH], exe_dir[MAX_PATH];
+        DWORD n = GetModuleFileNameA(NULL, exe_path, (DWORD)sizeof(exe_path));
+        snes_rom_dirname((n > 0u && n < sizeof(exe_path)) ? exe_path : argv[0], exe_dir, sizeof(exe_dir));
+        bool interactive = !headless && gl_selftest == NULL;
+        if (snes_rom_find(exe_dir, found_rom, sizeof(found_rom)) ||
+            (interactive && prompt_for_rom(found_rom, sizeof(found_rom)))) {
+            rom_path = found_rom;
+        } else {
+            fprintf(stderr, "Error: Contra III ROM not found. Pass it as an argument, set CONTRA3_ROM, or place\n"
+                            "       '%s' next to contra3.exe.\n", CONTRA3_ROM_FILENAME);
+            return 1;
+        }
+    }
     size_t rom_size = 0u;
-    uint8_t *rom = load_rom_file(rom_path, &rom_size);
-    if (rom == NULL || rom_size < 0x80000u) {
-        fprintf(stderr, "Error: Failed to load Contra III ROM at '%s'\n", rom_path);
-        free(rom);
+    char rom_err[512];
+    uint8_t *rom = snes_rom_load(rom_path, &rom_size, rom_err, sizeof(rom_err));
+    if (rom == NULL) {
+        fprintf(stderr, "Error: %s\n", rom_err);
+        if (!headless && gl_selftest == NULL) {
+            MessageBoxA(NULL, rom_err, "Contra III - ROM error", MB_OK | MB_ICONERROR);
+        }
         return 1;
     }
 

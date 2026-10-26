@@ -11,6 +11,7 @@
 #include "snes_apu.h"
 #include "snes_movie.h"
 #include "snes_savestate.h"
+#include "snes_rom.h"
 
 #define TEST_ASSERT(cond, msg)                                                      \
     do {                                                                            \
@@ -84,13 +85,22 @@ static uint32_t crc32_bytes(const uint8_t *p, size_t n) {
 }
 
 int main(int argc, char **argv) {
-    const char *rom_path = (argc > 1)
-        ? argv[1]
-        : "Z:/REA/ROM/Contra III - The Alien Wars (USA).sfc";
+    static char found[1024];
+    const char *rom_path = (argc > 1) ? argv[1] : NULL;
+    if (rom_path == NULL) {
+        char exe_dir[1024];
+        snes_rom_dirname(argv[0], exe_dir, sizeof(exe_dir));
+        TEST_ASSERT(snes_rom_find(exe_dir, found, sizeof(found)), "Contra III ROM found (argv[1], $CONTRA3_ROM or ../ROM)");
+        rom_path = found;
+    }
 
     size_t rom_size = 0u;
-    uint8_t *rom = load_rom_image(rom_path, &rom_size);
-    TEST_ASSERT(rom != NULL && rom_size == 1048576u, "Loaded 1 MB Contra III (USA) LoROM image");
+    char rom_err[512];
+    uint8_t *rom = snes_rom_load(rom_path, &rom_size, rom_err, sizeof(rom_err));
+    if (rom == NULL) {
+        fprintf(stderr, "[FAIL] %s\n", rom_err);
+    }
+    TEST_ASSERT(rom != NULL && rom_size == 1048576u, "Loaded and validated 1 MB Contra III (USA) LoROM image");
 
     static SnesCpuContext ctx;
     snes_context_init(&ctx, rom, rom_size);

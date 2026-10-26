@@ -5,13 +5,19 @@ $RootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BuildDir = Join-Path $RootDir "build"
 New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
 
-$Gcc = "Z:\REA\tools\w64devkit\bin\gcc.exe"
-$Ar  = "Z:\REA\tools\w64devkit\bin\ar.exe"
-
-if (-not (Test-Path $Gcc)) {
+# Toolchain: $env:CONTRA3_CC (path to gcc.exe), else the sibling ..\tools\w64devkit, else gcc on PATH
+$DevkitBin = Join-Path (Split-Path -Parent $RootDir) "tools\w64devkit\bin"
+if ($env:CONTRA3_CC) {
+    $Gcc = $env:CONTRA3_CC
+    $Ar  = Join-Path (Split-Path -Parent $Gcc) "ar.exe"
+} elseif (Test-Path (Join-Path $DevkitBin "gcc.exe")) {
+    $Gcc = Join-Path $DevkitBin "gcc.exe"
+    $Ar  = Join-Path $DevkitBin "ar.exe"
+} else {
     $Gcc = "gcc"
     $Ar  = "ar"
 }
+Write-Host "[CC] using $Gcc"
 
 $Sources = @(
     "snes_runtime",
@@ -19,6 +25,7 @@ $Sources = @(
     "snes_apu",
     "snes_movie",
     "snes_savestate",
+    "snes_rom",
     "bank_00",
     "bank_01",
     "bank_02",
@@ -49,7 +56,7 @@ if (Test-Path $AppSrc) {
     $AppExe = Join-Path $BuildDir "contra3.exe"
     Write-Host "[LD] build/contra3.exe"
     $GlSrc = Join-Path $RootDir "src\win32_gl.c"
-    & $Gcc -std=c11 -O2 -Wall -Wextra -Werror -I"$RootDir\include" $AppSrc $GlSrc $LibPath -lopengl32 -lgdi32 -lwinmm -o $AppExe
+    & $Gcc -std=c11 -O2 -Wall -Wextra -Werror -I"$RootDir\include" $AppSrc $GlSrc $LibPath -lopengl32 -lgdi32 -lwinmm -lcomdlg32 -o $AppExe
     if ($LASTEXITCODE -ne 0) { throw "Desktop app build failed" }
 }
 

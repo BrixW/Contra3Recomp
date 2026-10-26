@@ -51,6 +51,7 @@ Portable C11 static recompilation and standalone Win32 desktop executable for **
 | `src/snes_runtime.c` | Portable SNES LoROM memory bus, hardware 8x8 multiply & 16/8 divide, General DMA (`MDMAEN`), `MVN`/`MVP`, and fallback dispatcher |
 | `src/snes_ppu.c` | Full SNES S-PPU1/S-PPU2 scanline software rasterizer (Modes `0–7`, OAM, HDMA, dual windows, color math, V-IRQ splits) |
 | `src/snes_apu.c` | Zero-dependency C11 Sony `SPC700` (all `256` opcodes + 64-byte IPL ROM + 3 timers) & 8-voice BRR/Gaussian/Echo `S-DSP` |
+| `src/snes_rom.c` | ROM discovery ($CONTRA3_ROM, exe-relative folders) and validation (title, cartridge checksum, copier header) |
 | `src/snes_savestate.c` | Versioned save states: magic, format version, struct-layout fingerprint, ROM + payload checksums, staged load, atomic write |
 | `src/snes_movie.c` | Portable C11 movie decoders (Snes9x SMV, BizHawk BK2 zip/DEFLATE, native C3M) and C3M recorder |
 | `src/win32_main.c` | Win32 interactive desktop runner (OpenGL/GDI + `48 kHz` Catmull-Rom upsampled `waveOut` stereo + dynamic `XInput`), movie playback/recording, and the `--headless` / `--trace` / `--verify` CLI harness |
@@ -97,7 +98,12 @@ ctest --test-dir build-cmake --output-on-failure
 ```powershell
 .\build\contra3.exe "Z:\REA\ROM\Contra III - The Alien Wars (USA).sfc"
 ```
-*(If no ROM path argument is passed, `contra3.exe` defaults to `Z:/REA/ROM/Contra III - The Alien Wars (USA).sfc`.)*
+**Finding the ROM.** `contra3.exe`, the tests and `tools/translate_rom.py` look in this order:
+1. A path argument (or a ROM dragged onto `contra3.exe`)
+2. `$CONTRA3_ROM`
+3. `Contra III - The Alien Wars (USA).sfc` next to the executable, in its parent folder, or in a sibling `ROM` folder (`..\ROM`, `..\..\ROM`)
+
+If none is found when launching the desktop app, it opens a file picker. Images are validated by internal title and cartridge checksum, and a 512-byte copier header is stripped automatically. `build.ps1` uses `$env:CONTRA3_CC` (path to `gcc.exe`) if set, otherwise `..\tools\w64devkit`, otherwise `gcc` on `PATH`.
 
 ### Interactive Controls (Keyboard + XInput Gamepads 1 & 2)
 

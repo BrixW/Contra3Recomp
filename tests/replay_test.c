@@ -20,6 +20,7 @@
 #include "snes_ppu.h"
 #include "snes_apu.h"
 #include "snes_movie.h"
+#include "snes_rom.h"
 
 #define CHECKPOINT_INTERVAL 300u
 #define MAX_POKES           8u
@@ -60,24 +61,6 @@ static void hash_state(uint64_t out[NUM_COMPONENTS]) {
     out[2] = fnv1a(h, g_ctx.ppu.regs, sizeof(g_ctx.ppu.regs));
     out[3] = fnv1a(seed, g_apu.ram, sizeof(g_apu.ram));
     out[4] = fnv1a(seed, g_frame, sizeof(g_frame));
-}
-
-static uint8_t *load_file(const char *path, size_t *size) {
-    FILE *fp = fopen(path, "rb");
-    if (fp == NULL) {
-        return NULL;
-    }
-    fseek(fp, 0, SEEK_END);
-    long sz = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-    uint8_t *buf = (sz > 0) ? (uint8_t *)malloc((size_t)sz) : NULL;
-    if (buf != NULL && fread(buf, 1u, (size_t)sz, fp) != (size_t)sz) {
-        free(buf);
-        buf = NULL;
-    }
-    fclose(fp);
-    *size = (buf != NULL) ? (size_t)sz : 0u;
-    return buf;
 }
 
 static bool parse_scenario(const char *line, Scenario *sc) {
@@ -228,7 +211,7 @@ static int run_scenario(const Scenario *sc, const char *golden_dir, const uint8_
 
 int main(int argc, char **argv) {
     const char *golden_dir = "tests/golden";
-    const char *rom_path = getenv("CONTRA3_ROM");
+    const char *rom_path = NULL;
     bool update = false;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--update") == 0) {
@@ -239,15 +222,22 @@ int main(int argc, char **argv) {
             rom_path = argv[++i];
         }
     }
+    static char found[1024];
     if (rom_path == NULL) {
-        rom_path = "Z:/REA/ROM/Contra III - The Alien Wars (USA).sfc";
+        char exe_dir[1024];
+        snes_rom_dirname(argv[0], exe_dir, sizeof(exe_dir));
+        if (!snes_rom_find(exe_dir, found, sizeof(found))) {
+            fprintf(stderr, "[FAIL] Contra III ROM not found (set CONTRA3_ROM or pass --rom)\n");
+            return 2;
+        }
+        rom_path = found;
     }
 
     size_t rom_size = 0u;
-    uint8_t *rom = load_file(rom_path, &rom_size);
-    if (rom == NULL || rom_size != 1048576u) {
-        fprintf(stderr, "[FAIL] cannot load 1 MB Contra III ROM '%s' (set CONTRA3_ROM or pass --rom)\n", rom_path);
-        free(rom);
+    char err[512];
+    uint8_t *rom = snes_rom_load(rom_path, &rom_size, err, sizeof(err));
+    if (rom == NULL) {
+        fprintf(stderr, "[FAIL] %s\n", err);
         return 2;
     }
 
