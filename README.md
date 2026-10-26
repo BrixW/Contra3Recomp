@@ -1,6 +1,6 @@
 # Contra III: The Alien Wars (USA) — SNES 65816 Static Recompilation & Native Desktop Port
 
-Portable C11 static recompilation and standalone Win32 desktop executable for **Contra III: The Alien Wars (USA)** (`1,048,576` bytes, LoROM, SHA-256 `a93ea87fc835c530b5135c5294433d15eef6dbf656144b387e89ac19cf864996`), generated from Ghidra 12.1.4 (`65816:LE:24:snes`) analysis via the REA MCP server.
+Portable C11 static recompilation and standalone Windows/Linux desktop executables for **Contra III: The Alien Wars (USA)** (`1,048,576` bytes, LoROM, SHA-256 `a93ea87fc835c530b5135c5294433d15eef6dbf656144b387e89ac19cf864996`), generated from Ghidra 12.1.4 (`65816:LE:24:snes`) analysis via the REA MCP server.
 
 ---
 
@@ -55,6 +55,7 @@ Portable C11 static recompilation and standalone Win32 desktop executable for **
 | `src/snes_savestate.c` | Versioned save states: magic, format version, struct-layout fingerprint, ROM + payload checksums, staged load, atomic write |
 | `src/snes_movie.c` | Portable C11 movie decoders (Snes9x SMV, BizHawk BK2 zip/DEFLATE, native C3M) and C3M recorder |
 | `src/win32_main.c` | Win32 interactive desktop runner (OpenGL/GDI + `48 kHz` Catmull-Rom upsampled `waveOut` stereo + dynamic `XInput`), movie playback/recording, and the `--headless` / `--trace` / `--verify` CLI harness |
+| `src/linux_main.c` | Linux GTK4 launcher and SDL2 desktop runner (ROM chooser, saved keyboard/controller mappings, window, stereo audio, resize and fullscreen support) |
 | `src/win32_gl.c` | OpenGL 3.3 Core presenter (`wglCreateContextAttribsARB`, GLSL Sharp-Bilinear / Nearest / CRT filters, integer scaling, VSync) |
 | `src/bank_00.c` | Statically recompiled **Bank `$00`** (`514` functions, `13,007` instructions — Core Engine, Boot, NMI/IRQ, LZSS, SPC700, Dispatchers) |
 | `src/bank_01.c` | Statically recompiled **Bank `$01`** (`484` functions, `12,457` instructions — Player Controller, Weapons, Projectiles, Stage Enemies) |
@@ -93,6 +94,14 @@ cmake -B build-cmake -G Ninja -DCMAKE_C_COMPILER="Z:/REA/tools/w64devkit/bin/gcc
 cmake --build build-cmake
 ctest --test-dir build-cmake --output-on-failure
 ```
+
+### Option 3: Linux (CMake + SDL2)
+Install a C11 compiler, CMake, pkg-config, SDL2 and GTK4 development files (for example, `libsdl2-dev` and `libgtk-4-dev` on Debian/Ubuntu), then build:
+```sh
+cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Release
+cmake --build build-linux -j
+```
+This produces `build-linux/contra3`. Run it with no arguments to open the launcher and choose a ROM. For each keyboard or controller binding, click **Set** and press the desired input, or click **Clear** to remove it. Settings are saved in your user config directory under `contra3/launcher.ini`. You can also launch directly with `./build-linux/contra3 "/path/to/Contra III - The Alien Wars (USA).sfc"`, or set `CONTRA3_ROM`; pass `--launcher` to open the launcher while preselecting a ROM path. SDL2 provides the resizable desktop window, audio output, and accelerated presentation with a software fallback. `Esc` quits and `F11` toggles fullscreen. Up to two SDL GameController compatible pads are detected; the D-pad and left stick handle movement.
 
 ### Launching the Game (`build\contra3.exe`)
 ```powershell
