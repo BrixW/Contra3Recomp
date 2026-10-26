@@ -37,6 +37,12 @@ target_include_directories(contra3_recomp PUBLIC
 if(WIN32)
     add_executable(contra3 src/win32_main.c src/win32_gl.c src/win32_config.c)
     target_link_libraries(contra3 PRIVATE contra3_recomp opengl32 gdi32 winmm comdlg32)
+elseif(UNIX AND NOT APPLE)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
+    pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4)
+    add_executable(contra3 src/linux_main.c)
+    target_link_libraries(contra3 PRIVATE contra3_recomp PkgConfig::SDL2 PkgConfig::GTK4)
 endif()
 
 enable_testing()
