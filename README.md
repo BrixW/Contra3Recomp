@@ -1,6 +1,6 @@
 # Contra III: The Alien Wars (USA) — SNES 65816 Static Recompilation & Native Desktop Port
 
-Portable C11 static recompilation and standalone Win32 desktop executable for **Contra III: The Alien Wars (USA)** (`1,048,576` bytes, LoROM, SHA-256 `a93ea87fc835c530b5135c5294433d15eef6dbf656144b387e89ac19cf864996`), generated from Ghidra 12.1.4 (`65816:LE:24:snes`) analysis via the REA MCP server.
+Portable C11 static recompilation and native desktop ports (Windows, Linux, macOS) of **Contra III: The Alien Wars (USA)** (`1,048,576` bytes, LoROM, SHA-256 `a93ea87fc835c530b5135c5294433d15eef6dbf656144b387e89ac19cf864996`), generated from Ghidra 12.1.4 (`65816:LE:24:snes`) analysis via the REA MCP server.
 
 ---
 
@@ -55,7 +55,13 @@ Portable C11 static recompilation and standalone Win32 desktop executable for **
 | `src/snes_savestate.c` | Versioned save states: magic, format version, struct-layout fingerprint, ROM + payload checksums, staged load, atomic write |
 | `src/snes_movie.c` | Portable C11 movie decoders (Snes9x SMV, BizHawk BK2 zip/DEFLATE, native C3M) and C3M recorder |
 | `src/win32_main.c` | Win32 interactive desktop runner (OpenGL/GDI + `48 kHz` Catmull-Rom upsampled `waveOut` stereo + dynamic `XInput`), movie playback/recording, and the `--headless` / `--trace` / `--verify` CLI harness |
-| `src/win32_gl.c` | OpenGL 3.3 Core presenter (`wglCreateContextAttribsARB`, GLSL Sharp-Bilinear / Nearest / CRT filters, integer scaling, VSync) |
+| `src/win32_gl.c` | WGL context creation (`wglCreateContextAttribsARB`, 3.3 Core), VSync and `SwapBuffers` for the Win32 runner |
+| `src/sdl_main.c` | Cross-platform SDL2 frontend (Linux, macOS, Windows): window + GL 3.3 context or `SDL_Renderer` fallback, 32 kHz audio, keyboard, GameController input and rumble |
+| `src/gl_present.c` | Portable OpenGL 3.3 Core presenter (GLSL Sharp-Bilinear / Nearest / CRT filters, integer scaling); every GL entry point comes through the frontend's loader |
+| `src/c3_config.c` | Portable `contra3.ini`: abstract `C3Key` keyboard bindings for both players, gamepad remapping, rumble, video/audio/game preferences, OPTION MODE values, extras |
+| `src/c3_overlay.c` | In-game settings menu drawn into the 256x224 frame with a built-in 5x7 font (video, audio, key/pad remapping, rumble, cheats & extras, states) |
+| `src/contra3_events.c` | Game-event detector for rumble: per-player deaths, Mega Bombs and boss blasts, read from the sound queue and actor state |
+| `src/c3_rumble.c` | Rumble envelopes (per pad, strongest-wins, linear decay) turned into motor levels for XInput / SDL |
 | `src/bank_00.c` | Statically recompiled **Bank `$00`** (`514` functions, `13,007` instructions — Core Engine, Boot, NMI/IRQ, LZSS, SPC700, Dispatchers) |
 | `src/bank_01.c` | Statically recompiled **Bank `$01`** (`484` functions, `12,457` instructions — Player Controller, Weapons, Projectiles, Stage Enemies) |
 | `src/bank_02.c` | Statically recompiled **Bank `$02`** (`620` functions, `13,757` instructions — Stage Bosses, Mode 7 Overhead Stages, Multi-Part Actors) |
@@ -68,6 +74,8 @@ Portable C11 static recompilation and standalone Win32 desktop executable for **
 | `tools/emu_trace.lua` | BizHawk / Snes9x-rr Lua exporter writing the reference trace CSV (same columns as `--trace`, plus emulator lag flags) |
 | `tools/compare_trace.py` | Aligns a reference emulator trace with a `--trace` CSV and reports the first divergence |
 | `tools/soak_all_stages.py` | All-stage robustness soak: warps to stages 1-6 (1P/2P), drives a deterministic input bot, asserts no hangs / unresolved jumps |
+| `tests/unit_test.c` | ROM-free unit tests (ini round-trip, key names, mapping, overlay navigation/capture/rendering, rumble, `.c3m`, DEFLATE); the only tests CI can run |
+| `.github/workflows/build.yml` | CI: Linux (gcc + clang), macOS and Windows (MSYS2) builds of every frontend + unit tests |
 | `tests/smoke_test.c` | Native execution verification suite (`RESET`, `KONAMI` SRAM, `PRNG`, `Math_Mul16x16`, `$1D:ABA0`, `NMI`, `snes_ppu`, `snes_apu`, movie decoders) |
 | `ARCHITECTURE.md` | Deep technical breakdown of Contra III's engine, memory map, interrupt architecture, LZSS, PPU rasterizer, and SPC700/S-DSP pipeline |
 | `BANK_MAP.md` | Full 32-bank (`$00`–`$1F`) ROM map and REA Ghidra provenance ledger |
@@ -85,7 +93,8 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 Produces:
 - `build\libcontra3_recomp.a` — Portable static C11 game + runtime + PPU + APU library
 - `build\contra3.exe` — Interactive Win32 desktop executable (OpenGL 3.3 / GDI, `60.0988 Hz` video + `48 kHz` cubic-upsampled stereo audio) & headless CLI
-- `build\contra3_smoke_test.exe` — Automated verification test suite (`11/11` checks)
+- `build\contra3_unit_test.exe`, `build\contra3_smoke_test.exe`, `build\contra3_replay_test.exe` — unit tests, the `11/11` smoke suite and the 5 golden replays (all run by the script)
+- `build\contra3_sdl.exe` — the SDL2 frontend, only when `$env:CONTRA3_SDL2` points at an SDL2 MinGW development folder (`...\SDL2-2.30.x\x86_64-w64-mingw32`)
 
 ### Option 2: CMake + Ninja
 ```powershell
@@ -93,6 +102,19 @@ cmake -B build-cmake -G Ninja -DCMAKE_C_COMPILER="Z:/REA/tools/w64devkit/bin/gcc
 cmake --build build-cmake
 ctest --test-dir build-cmake --output-on-failure
 ```
+
+### Option 3: Linux and macOS (SDL2)
+```sh
+# Debian / Ubuntu:  sudo apt install build-essential cmake ninja-build libsdl2-dev
+# Fedora:           sudo dnf install gcc cmake ninja-build SDL2-devel
+# Arch:             sudo pacman -S base-devel cmake ninja sdl2
+# macOS (Homebrew): brew install cmake ninja sdl2
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+ctest --test-dir build --output-on-failure      # set -DCONTRA3_ROM=/path/to/rom.sfc to include the game tests
+./build/contra3 "/path/to/Contra III - The Alien Wars (USA).sfc"
+```
+The SDL2 frontend (`src/sdl_main.c`) shares the game, `contra3.ini`, the in-game menu, rumble and the OpenGL filters with the Win32 runner. It uses an OpenGL 3.3 Core context when one is available and otherwise draws through `SDL_Renderer` (`--software` forces that). Settings and the quicksave go next to the executable when that folder is writable, else to SDL's per-user folder (`~/.local/share/Contra3Recomp/Contra3/`). Gamepads use SDL's GameController database (Xbox, PlayStation, Switch Pro, 8BitDo...), with the same button names as XInput. The preemptible main thread uses a pthread with a strict handoff outside Windows; it produces the same golden hashes as the Win32 fiber build. The headless verification CLI (`--headless`, `--trace`, `--verify`) is still Win32-only; on Windows, `-DCONTRA3_SDL=ON` builds `contra3_sdl.exe` next to `contra3.exe`.
 
 ### Launching the Game (`build\contra3.exe`)
 ```powershell
@@ -119,12 +141,23 @@ If none is found when launching the desktop app, it opens a file picker. Images 
 | Start / Pause | `Start` | `Enter` | `Start` |
 | Select | `Select` | `Right Shift` or `Backspace` | `Back` |
 
+Both pads vibrate (when **rumble** is on): a heavy jolt for the player who dies, a long blast for whoever throws a Mega Bomb (a lighter one for the partner), and a short thump when a boss explodes. The strength is adjustable, and the effects come from the game's own sound queue, so they line up with the sound effects. XInput on Windows, SDL rumble on Linux/macOS.
+
 All settings live in `contra3.ini` next to `contra3.exe`. It's created with the defaults on first run and saved on exit when anything changed; command-line options override it. Sections:
 - `[p1]` / `[p2]`: up to four keys per button. **Player 2** defaults to the numpad (`8/5/4/6` D-pad, `1` jump, `2` shoot, `3` switch, `0` bomb, `7`/`9` L/R, `+` Start, `-` Select). Pressing opposite directions together cancels them, as on a real D-pad.
-- **In-window rebinding**: `F2` (Player 1) or `Shift+F2` (Player 2) pauses the game and asks for each button in turn in the title bar. Esc keeps the current key and `F2` cancels; the result is saved straight away. A key taken from another button is removed from it.
-- `[gamepad]`: remaps XInput `a b x y lb rb lt rt back start` to any SNES button (or `none`) for both pads, plus the stick `deadzone`. The D-pad and left stick always steer.
+- **Rebinding**: in the in-game menu (below), or straight to the key list with `F2` (Player 1) / `Shift+F2` (Player 2). Select a button and press the new key, or use *Bind all* to walk through every button (Esc keeps a button's key). A key taken from another button is removed from it.
+- `[gamepad]`: remaps the pad's `a b x y lb rb lt rt back start` to any SNES button (or `none`) for both pads, plus the stick `deadzone`. The D-pad and left stick always steer.
+- `[rumble]`: `enabled`, `strength` (10–100 %). `[audio]`: `volume` (0–100 %).
 - `[options]`: the in-game OPTION MODE values (PLAYER lives 3/5/7, LEVEL easy/normal/hard, SOUND stereo/mono). They're saved when you quit and restored at power-on, so they survive restarts like the console's warm-reset memory does within a session. Movie playback and recording always start from the game's defaults, so movies stay reproducible.
 - `[video]`, `[game]`, `[extras]`: filter, integer scaling, VSync, lag model, and the toggles below.
+
+### In-Game Menu (`Esc`, or `Back + Start` on a gamepad)
+Pauses the game and shows a settings menu over it. Arrows / D-pad / left stick move and change values, `Enter` / `A` selects, `Esc` / `B` goes back. Changes apply immediately and are saved to `contra3.ini` when the menu closes.
+- **Video**: filter (Sharp-Bilinear / Nearest / CRT), integer scaling, VSync, fullscreen, authentic slowdown
+- **Audio**: volume, mute
+- **Controls & Rumble**: keyboard bindings for P1 and P2, gamepad button mapping, stick deadzone, rumble on/off and strength, test rumble, reset controls to defaults
+- **Cheats & Extras**: stage select screen, 30 starting lives, infinite lives, start stage (NORMAL or 1–6)
+- **Save State / Load State**, **Reset**, **Quit**
 
 ### Application Hotkeys
 - `Tab` (hold) / `F1` (toggle): Uncapped Turbo Fast-Forward
@@ -142,7 +175,7 @@ All settings live in `contra3.ini` next to `contra3.exe`. It's created with the 
 - `F11` / `Alt+Enter`: Toggle borderless fullscreen
 - `F12`: Save `.bmp` screenshot (`contra3_shot_XXXX.bmp`)
 - `Ctrl+R`: Soft Reset (`WarmReset_Entry` `$00:80A3`)
-- `Esc`: Exit
+- `Esc`: In-game menu (gamepad: `Back + Start`); `F2` / `Shift+F2` open the P1 / P2 key bindings directly
 
 ### Presentation Options
 ```powershell
@@ -192,9 +225,9 @@ python .\tools\compare_trace.py emu_trace.csv ours.csv
 python .\tools\soak_all_stages.py --frames 36000
 ```
 ### Authentic Slowdown (`--lag-model`, `F3`)
-Every generated instruction charges its WDC 65C816 cycle cost (`SNES_CYCLES`): M/X width, the direct-page penalty, taken branches, MVN/MVP and DMA are all included. With `--lag-model`, an NMI whose game logic exceeds the frame budget (45,642 CPU cycles by default, about one NTSC frame at SlowROM speed) makes the following NMIs hit Konami's `$003C` busy guard. Those are lag frames: no game logic runs and no input is read, just as on hardware. `--verify` prints the per-frame CPU load (average 25–33k cycles in normal Stage 1/2/4 play). The `nmi_cycles`, `apu_polls` and `lag` trace columns show it frame by frame.
+Every generated instruction charges its WDC 65C816 cycle cost (`SNES_CYCLES`): M/X width, the direct-page penalty, taken branches, MVN/MVP and DMA are all included. With `--lag-model`, an NMI whose game logic exceeds the frame budget (45,000 CPU cycles by default, about one NTSC frame at SlowROM speed) makes the following NMIs hit Konami's `$003C` busy guard. Those are lag frames: no game logic runs and no input is read, just as on hardware. `--verify` prints the per-frame CPU load (average 25–33k cycles in normal Stage 1/2/4 play). The `nmi_cycles`, `apu_polls` and `lag` trace columns show it frame by frame.
 
-The SPC700 runs on the same timeline as the CPU: it catches up to the 65816's current time before every `$2140–$2143` access and at every frame boundary. So audio-upload handshakes and synchronous decompression take real time. With `--lag-model`, power-on holds the screen for about 2 s, the Stage 1 intro card for about 4 s, and the stage-clear tally for about 3.7 s before play resumes. Without it, video skips over that time but the audio still lives through it, so a capture is about 11 s longer over the first 100 s. The 45,642-cycle budget hasn't been calibrated against hardware, so the model is off by default. Calibrate it with an emulator trace: `contra3.exe --headless 0 --movie run.bk2 --lag-model --trace ours.csv`, then `python tools\compare_trace.py emu_trace.csv ours.csv --lag-report`.
+The SPC700 runs on the same timeline as the CPU: it catches up to the 65816's current time before every `$2140–$2143` access and at every frame boundary. So audio-upload handshakes and synchronous decompression take real time. With `--lag-model`, power-on holds the screen for about 2 s, the Stage 1 intro card for about 4 s, and the stage-clear tally for about 3.7 s before play resumes. Without it, video skips over that time but the audio still lives through it, so a capture is about 11 s longer over the first 100 s. The 45,000-cycle budget was calibrated against snes9x (every equivalence scenario is bit-exact between about 44,700 and 45,150), but lag frames themselves haven't been compared against hardware yet, so the model is off by default. Check it with an emulator trace: `contra3.exe --headless 0 --movie run.bk2 --lag-model --trace ours.csv`, then `python tools\compare_trace.py emu_trace.csv ours.csv --lag-report`.
 
 The recompilation without `--lag-model` services every NMI, so it never lags. Real hardware drops frames when Konami's NMI logic overruns (the `$003C` re-entrancy guard), and the joypad input on those frames is ignored. Skipping the emulator's lag frames (`--lag-from`) therefore keeps the input aligned with the game's logic frames.
 
@@ -216,3 +249,13 @@ The recompilation without `--lag-model` services every NMI, so it never lags. Re
    - **Done**: `.smv` / `.bk2` / `Input Log.txt` / `.c3m` playback (`--movie`), recording (`--record`, `F6`), per-frame WRAM traces (`--trace`), progress/hang verification (`--verify`), the emulator lag-frame skip (`--lag-from`), the BizHawk/Snes9x trace exporter and the trace comparator. Record -> replay is deterministic: the traces match on every frame.
    - **Done**: All-stage soak across Stages 1-6, 1P and 2P, including stage clears (`tools/soak_all_stages.py`): `0` unresolved jumps, `0` hangs.
    - **Done**: Bit-exact against snes9x in all 13 suite scenarios (`tools/refemu/compare_all.py`). Getting there needed the preemptible main thread (background SPC700 uploads now span frames while NMIs keep running, as on hardware) and calibrating the CPU budget to 45,000 cycles per frame. Before those two changes, Stage 6 2P diverged when a mid-stage upload released the camera lock about 125 frames too early.
+
+---
+
+## Contributing
+
+Contributions are welcome. Open pull requests against the **`AlienWars`** branch, which is the community branch anyone can commit to. `HardCorps` is the maintainer's working branch and `main` is the stable line. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the build, the tests to run, and the rules about the ROM.
+
+## License
+
+The project code (runtime, PPU, APU, frontends, tools and tests) is released under the [MIT License](LICENSE). The ROM is **not** included and never will be: you need your own legally obtained copy of *Contra III: The Alien Wars (USA)*. The generated `src/bank_*.c` files are a mechanical translation of Konami's program code. They are provided for study and preservation and do not grant any rights to the game itself; *Contra* is a trademark of Konami.

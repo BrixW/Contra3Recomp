@@ -48,7 +48,10 @@
 #include "snes_rom.h"
 #include "contra3_extras.h"
 #include "win32_gl.h"
-#include "win32_config.h"
+#include "c3_config.h"
+#include "c3_overlay.h"
+#include "c3_rumble.h"
+#include "contra3_events.h"
 
 /* Minimal XInput structures for zero-dependency dynamic controller support */
 typedef struct Win32XInputGamepad {
@@ -67,6 +70,13 @@ typedef struct Win32XInputState {
 } Win32XInputState;
 
 typedef DWORD (WINAPI *PFN_XInputGetState)(DWORD dwUserIndex, Win32XInputState *pState);
+
+typedef struct Win32XInputVibration {
+    WORD wLeftMotorSpeed;    /* heavy, low-frequency motor */
+    WORD wRightMotorSpeed;   /* light, high-frequency motor */
+} Win32XInputVibration;
+
+typedef DWORD (WINAPI *PFN_XInputSetState)(DWORD dwUserIndex, Win32XInputVibration *pVibration);
 
 #define XINPUT_BTN_DPAD_UP        0x0001u
 #define XINPUT_BTN_DPAD_DOWN      0x0002u
@@ -93,6 +103,7 @@ typedef DWORD (WINAPI *PFN_XInputGetState)(DWORD dwUserIndex, Win32XInputState *
 #define AUDIO_BLOCK_FRAMES        (AUDIO_IN_PAIR_COUNT * 3u)   /* 1023 frames @ 48 kHz */
 
 static PFN_XInputGetState g_xinput_get_state = NULL;
+static PFN_XInputSetState g_xinput_set_state = NULL;
 static SnesCpuContext     g_ctx;
 static SnesApu            g_apu;
 static uint32_t           g_framebuf[SNES_SCREEN_WIDTH * SNES_SCREEN_HEIGHT];
@@ -109,6 +120,9 @@ static bool               g_turbo_toggle = false;
 static bool               g_fullscreen   = false;
 static WINDOWPLACEMENT    g_prev_wp;
 static unsigned           g_shot_index   = 1u;
+static Contra3Config      g_config;                 /* contra3.ini (interactive sessions) */
+static C3Overlay          g_overlay;                /* in-game settings overlay */
+static uint32_t           g_overlay_buf[SNES_SCREEN_WIDTH * SNES_SCREEN_HEIGHT];
 
 static bool               g_use_gl        = false;
 static bool               g_vsync         = false;
@@ -208,6 +222,12 @@ static void win32_audio_pump(bool turbo, bool paused) {
             break;
         }
         upsample_32k_to_48k(raw_32k, g_wave_bufs[g_wave_next], AUDIO_IN_PAIR_COUNT);
+        if (g_config.volume < 100u) {
+            int16_t *out = g_wave_bufs[g_wave_next];
+            for (unsigned i = 0u; i < AUDIO_BLOCK_FRAMES * 2u; ++i) {
+                out[i] = (int16_t)((int32_t)out[i] * (int32_t)g_config.volume / 100);
+            }
+        }
         hdr->dwBufferLength = (DWORD)(AUDIO_BLOCK_FRAMES * 4u);
         hdr->dwFlags &= ~(DWORD)WHDR_DONE;
         if (waveOutWrite(g_waveout, hdr, sizeof(WAVEHDR)) != MMSYSERR_NOERROR) {
@@ -251,6 +271,10 @@ static void init_xinput(void) {
             FARPROC proc = GetProcAddress(mod, "XInputGetState");
             if (proc != NULL) {
                 memcpy(&g_xinput_get_state, &proc, sizeof(g_xinput_get_state));
+                FARPROC set = GetProcAddress(mod, "XInputSetState");
+                if (set != NULL) {
+                    memcpy(&g_xinput_set_state, &set, sizeof(g_xinput_set_state));
+                }
                 return;
             }
         }
@@ -281,15 +305,63 @@ static void set_status(HWND hwnd, const char *msg) {
     SetWindowTextA(hwnd, msg);
 }
 
-static Contra3Config g_config;
+/* C3Key -> Win32 virtual key */
+static const uint8_t k_c3_to_vk[C3K_COUNT] = {
+    [C3K_A] = 'A', [C3K_B] = 'B', [C3K_C] = 'C', [C3K_D] = 'D', [C3K_E] = 'E', [C3K_F] = 'F', [C3K_G] = 'G',
+    [C3K_H] = 'H', [C3K_I] = 'I', [C3K_J] = 'J', [C3K_K] = 'K', [C3K_L] = 'L', [C3K_M] = 'M', [C3K_N] = 'N',
+    [C3K_O] = 'O', [C3K_P] = 'P', [C3K_Q] = 'Q', [C3K_R] = 'R', [C3K_S] = 'S', [C3K_T] = 'T', [C3K_U] = 'U',
+    [C3K_V] = 'V', [C3K_W] = 'W', [C3K_X] = 'X', [C3K_Y] = 'Y', [C3K_Z] = 'Z',
+    [C3K_0] = '0', [C3K_1] = '1', [C3K_2] = '2', [C3K_3] = '3', [C3K_4] = '4',
+    [C3K_5] = '5', [C3K_6] = '6', [C3K_7] = '7', [C3K_8] = '8', [C3K_9] = '9',
+    [C3K_UP] = VK_UP, [C3K_DOWN] = VK_DOWN, [C3K_LEFT] = VK_LEFT, [C3K_RIGHT] = VK_RIGHT,
+    [C3K_ENTER] = VK_RETURN, [C3K_SPACE] = VK_SPACE, [C3K_TAB] = VK_TAB, [C3K_BACKSPACE] = VK_BACK,
+    [C3K_ESCAPE] = VK_ESCAPE,
+    [C3K_LSHIFT] = VK_LSHIFT, [C3K_RSHIFT] = VK_RSHIFT, [C3K_LCTRL] = VK_LCONTROL, [C3K_RCTRL] = VK_RCONTROL,
+    [C3K_LALT] = VK_LMENU, [C3K_RALT] = VK_RMENU,
+    [C3K_INSERT] = VK_INSERT, [C3K_DELETE] = VK_DELETE, [C3K_HOME] = VK_HOME, [C3K_END] = VK_END,
+    [C3K_PAGEUP] = VK_PRIOR, [C3K_PAGEDOWN] = VK_NEXT,
+    [C3K_NUM0] = VK_NUMPAD0, [C3K_NUM1] = VK_NUMPAD1, [C3K_NUM2] = VK_NUMPAD2, [C3K_NUM3] = VK_NUMPAD3,
+    [C3K_NUM4] = VK_NUMPAD4, [C3K_NUM5] = VK_NUMPAD5, [C3K_NUM6] = VK_NUMPAD6, [C3K_NUM7] = VK_NUMPAD7,
+    [C3K_NUM8] = VK_NUMPAD8, [C3K_NUM9] = VK_NUMPAD9, [C3K_NUMADD] = VK_ADD, [C3K_NUMSUB] = VK_SUBTRACT,
+    [C3K_NUMMUL] = VK_MULTIPLY, [C3K_NUMDIV] = VK_DIVIDE, [C3K_NUMDOT] = VK_DECIMAL, [C3K_NUMENTER] = VK_RETURN,
+    [C3K_COMMA] = VK_OEM_COMMA, [C3K_PERIOD] = VK_OEM_PERIOD, [C3K_SLASH] = VK_OEM_2, [C3K_SEMICOLON] = VK_OEM_1,
+    [C3K_QUOTE] = VK_OEM_7, [C3K_LBRACKET] = VK_OEM_4, [C3K_RBRACKET] = VK_OEM_6, [C3K_MINUS] = VK_OEM_MINUS,
+    [C3K_EQUALS] = VK_OEM_PLUS, [C3K_BACKSLASH] = VK_OEM_5, [C3K_GRAVE] = VK_OEM_3,
+    [C3K_F1] = VK_F1, [C3K_F2] = VK_F2, [C3K_F3] = VK_F3, [C3K_F4] = VK_F4, [C3K_F5] = VK_F5, [C3K_F6] = VK_F6,
+    [C3K_F7] = VK_F7, [C3K_F8] = VK_F8, [C3K_F9] = VK_F9, [C3K_F10] = VK_F10, [C3K_F11] = VK_F11, [C3K_F12] = VK_F12,
+};
+
+/* WM_KEYDOWN -> C3Key (left/right Shift, Ctrl, Alt and the numpad Enter are told apart) */
+static C3Key vk_to_c3(WPARAM wparam, LPARAM lparam) {
+    bool extended = (lparam & (1 << 24)) != 0;
+    UINT vk = (UINT)wparam;
+    if (vk == VK_SHIFT)   vk = MapVirtualKeyA((UINT)((lparam >> 16) & 0xFF), MAPVK_VSC_TO_VK_EX);
+    if (vk == VK_CONTROL) vk = extended ? VK_RCONTROL : VK_LCONTROL;
+    if (vk == VK_MENU)    vk = extended ? VK_RMENU : VK_LMENU;
+    if (vk == VK_RETURN && extended) return C3K_NUMENTER;
+    for (int k = 1; k < C3K_COUNT; ++k) {
+        if (k_c3_to_vk[k] == vk && k != C3K_NUMENTER) {
+            return (C3Key)k;
+        }
+    }
+    return C3K_NONE;
+}
+
+static bool win32_key_down(C3Key key, void *user) {
+    (void)user;
+    uint8_t vk = (key > C3K_NONE && key < C3K_COUNT) ? k_c3_to_vk[key] : 0u;
+    return vk != 0u && (GetAsyncKeyState(vk) & 0x8000) != 0;
+}
+
+/* Raw XInput state (wButtons + stick); false when the pad is not connected */
+static bool read_xinput(DWORD index, Win32XInputState *st) {
+    memset(st, 0, sizeof(*st));
+    return g_xinput_get_state != NULL && g_xinput_get_state(index, st) == ERROR_SUCCESS;
+}
 
 static uint16_t poll_xinput_pad(DWORD index) {
-    if (g_xinput_get_state == NULL) {
-        return 0u;
-    }
     Win32XInputState st;
-    memset(&st, 0, sizeof(st));
-    if (g_xinput_get_state(index, &st) != ERROR_SUCCESS) {
+    if (!read_xinput(index, &st)) {
         return 0u;
     }
     /* D-pad and left stick always steer; face buttons, shoulders, triggers, Back/Start follow [gamepad] */
@@ -300,7 +372,13 @@ static uint16_t poll_xinput_pad(DWORD index) {
     if ((b & XINPUT_BTN_DPAD_DOWN)  || st.Gamepad.sThumbLY < -dz) mask |= SNES_BTN_DOWN;
     if ((b & XINPUT_BTN_DPAD_LEFT)  || st.Gamepad.sThumbLX < -dz) mask |= SNES_BTN_LEFT;
     if ((b & XINPUT_BTN_DPAD_RIGHT) || st.Gamepad.sThumbLX >  dz) mask |= SNES_BTN_RIGHT;
-    mask |= contra3_config_map_pad(&g_config, b, st.Gamepad.bLeftTrigger, st.Gamepad.bRightTrigger);
+    bool down[C3P_COUNT] = {
+        (b & XINPUT_BTN_A) != 0u, (b & XINPUT_BTN_B) != 0u, (b & XINPUT_BTN_X) != 0u, (b & XINPUT_BTN_Y) != 0u,
+        (b & XINPUT_BTN_LEFT_SHOULDER) != 0u, (b & XINPUT_BTN_RIGHT_SHOULDER) != 0u,
+        st.Gamepad.bLeftTrigger > 64u, st.Gamepad.bRightTrigger > 64u,
+        (b & XINPUT_BTN_BACK) != 0u, (b & XINPUT_BTN_START) != 0u,
+    };
+    mask |= c3_config_map_pad(&g_config, down);
     return mask;
 }
 
@@ -308,7 +386,7 @@ static uint16_t poll_keyboard_pad(HWND hwnd, unsigned player) {
     if (GetForegroundWindow() != hwnd) {
         return 0u;
     }
-    return contra3_config_poll(&g_config, player);
+    return c3_config_keys_to_pad(&g_config, player, win32_key_down, NULL);
 }
 
 static void toggle_fullscreen(HWND hwnd) {
@@ -347,7 +425,7 @@ static void present_framebuffer(HWND hwnd, HDC hdc) {
     }
 
     if (g_use_gl) {
-        win32_gl_present(hdc, g_framebuf, SNES_SCREEN_WIDTH, SNES_SCREEN_HEIGHT,
+        win32_gl_present(hdc, g_overlay.open ? g_overlay_buf : g_framebuf, SNES_SCREEN_WIDTH, SNES_SCREEN_HEIGHT,
                          win_w, win_h, g_integer_scale, g_gl_filter);
         return;
     }
@@ -383,7 +461,7 @@ static void present_framebuffer(HWND hwnd, HDC hdc) {
     SetStretchBltMode(hdc, COLORONCOLOR);
     StretchDIBits(hdc, dst_x, dst_y, dst_w, dst_h,
                   0, 0, SNES_SCREEN_WIDTH, SNES_SCREEN_HEIGHT,
-                  g_framebuf, &bmi, DIB_RGB_COLORS, SRCCOPY);
+                  g_overlay.open ? g_overlay_buf : g_framebuf, &bmi, DIB_RGB_COLORS, SRCCOPY);
 }
 
 static void soft_reset(SnesCpuContext *ctx, SnesApu *apu) {
@@ -396,91 +474,70 @@ static uint32_t g_lag_budget      = 0u;   /* CPU cycles per frame for the lag mo
 static uint32_t g_cpu_budget      = 0u;   /* timing-only CPU cycles per frame override (0 = default) */
 static Contra3Extras g_extras = { 0u, 0u, false, -1, 0u }; /* restored Contra Spirits features + host extras */
 
-/* Interactive key rebinding (F2 = Player 1, Shift+F2 = Player 2) */
-static int      g_rebind_player = -1;
-static unsigned g_rebind_button = 0u;
-static uint8_t  g_rebind_backup[CFG_BUTTONS][CFG_KEYS_PER_BTN];
-static char     g_rebind_prompt[200];
+static unsigned g_cli_extras      = 0u;   /* CONTRA3_UNLOCK_* given on the command line */
+static int      g_cli_start_stage = -1;   /* --start-stage (-1 = from contra3.ini) */
+static uint32_t g_lag_cycles      = SNES_LAG_BUDGET_DEFAULT; /* budget used when the lag model is on */
 
-static void rebind_prompt(HWND hwnd) {
-    char cur[48] = "";
-    for (unsigned k = 0u; k < CFG_KEYS_PER_BTN && g_config.keys[g_rebind_player][g_rebind_button][k] != 0u; ++k) {
-        char name[16];
-        contra3_config_key_name(g_config.keys[g_rebind_player][g_rebind_button][k], name, sizeof(name));
-        size_t len = strlen(cur);
-        snprintf(cur + len, sizeof(cur) - len, "%s%s", k ? ", " : "", name);
-    }
-    snprintf(g_rebind_prompt, sizeof(g_rebind_prompt),
-             "Player %d controls %u/%u: press a key for %s  [now: %s]  (Esc = keep, F2 = cancel)",
-             g_rebind_player + 1, g_rebind_button + 1u, (unsigned)CFG_BUTTONS,
-             contra3_config_button_label(g_rebind_button), cur[0] ? cur : "none");
-    SetWindowTextA(hwnd, g_rebind_prompt);
-}
+/* Controller rumble */
+static Contra3EventState g_events;
+static C3Rumble          g_rumble;
 
-static void rebind_start(HWND hwnd, int player) {
-    g_rebind_player = player;
-    g_rebind_button = 0u;
-    memcpy(g_rebind_backup, g_config.keys[player], sizeof(g_rebind_backup));
-    rebind_prompt(hwnd);
-}
-
-/* Distinguish left/right Shift, Ctrl and Alt, which WM_KEYDOWN reports generically */
-static uint8_t resolve_vk(WPARAM wparam, LPARAM lparam) {
-    bool extended = (lparam & (1 << 24)) != 0;
-    if (wparam == VK_SHIFT) {
-        return (uint8_t)MapVirtualKeyA((UINT)((lparam >> 16) & 0xFF), MAPVK_VSC_TO_VK_EX);
+static void rumble_send(bool force_zero) {
+    if (g_xinput_set_state == NULL) {
+        return;
     }
-    if (wparam == VK_CONTROL) {
-        return extended ? VK_RCONTROL : VK_LCONTROL;
-    }
-    if (wparam == VK_MENU) {
-        return extended ? VK_RMENU : VK_LMENU;
-    }
-    return (uint8_t)wparam;
-}
-
-/* Returns true when the key was consumed by the rebinding flow */
-static bool rebind_handle_key(HWND hwnd, WPARAM wparam, LPARAM lparam) {
-    if (g_rebind_player < 0) {
-        return false;
-    }
-    if (wparam == VK_F2) {
-        memcpy(g_config.keys[g_rebind_player], g_rebind_backup, sizeof(g_rebind_backup));
-        g_rebind_player = -1;
-        set_status(hwnd, "Key rebinding cancelled");
-        return true;
-    }
-    if (wparam != VK_ESCAPE) {
-        uint8_t vk = resolve_vk(wparam, lparam);
-        if (!contra3_config_key_supported(vk) || (vk >= VK_F1 && vk <= VK_F24)) {
-            SetWindowTextA(hwnd, "That key can't be bound - press another (Esc = keep, F2 = cancel)");
-            return true;
+    for (DWORD p = 0u; p < 2u; ++p) {
+        if (force_zero || g_rumble.changed[p]) {
+            Win32XInputVibration v = { force_zero ? 0u : g_rumble.out_low[p], force_zero ? 0u : g_rumble.out_high[p] };
+            g_xinput_set_state(p, &v);
         }
-        /* One key per button from the wizard; a key moves away from any other button of this player */
-        for (unsigned b = 0u; b < CFG_BUTTONS; ++b) {
-            for (unsigned k = 0u; k < CFG_KEYS_PER_BTN; ++k) {
-                if (g_config.keys[g_rebind_player][b][k] == vk) {
-                    memmove(&g_config.keys[g_rebind_player][b][k], &g_config.keys[g_rebind_player][b][k + 1u],
-                            CFG_KEYS_PER_BTN - 1u - k);
-                    g_config.keys[g_rebind_player][b][CFG_KEYS_PER_BTN - 1u] = 0u;
-                    k--;
-                }
-            }
+    }
+}
+
+/* In-game overlay */
+static char      g_overlay_status[64];
+static bool      g_config_dirty = false;
+
+/* contra3.ini is the source of truth for interactive settings; apply it every frame */
+static void apply_config(void) {
+    g_gl_filter = (strcmp(g_config.filter, "crt") == 0)     ? WIN32_GL_FILTER_CRT :
+                  (strcmp(g_config.filter, "nearest") == 0) ? WIN32_GL_FILTER_NEAREST : WIN32_GL_FILTER_SHARP;
+    g_integer_scale = g_config.integer_scale;
+    if (g_vsync != g_config.vsync) {
+        g_vsync = g_config.vsync;
+        if (g_use_gl) {
+            win32_gl_set_vsync(g_vsync);
         }
-        memset(g_config.keys[g_rebind_player][g_rebind_button], 0, CFG_KEYS_PER_BTN);
-        g_config.keys[g_rebind_player][g_rebind_button][0] = vk;
     }
-    if (++g_rebind_button >= CFG_BUTTONS) {
-        char msg[96];
-        bool saved = contra3_config_save(&g_config);
-        snprintf(msg, sizeof(msg), "Player %d controls %s", g_rebind_player + 1,
-                 saved ? "saved to contra3.ini" : "updated (contra3.ini could not be written)");
-        g_rebind_player = -1;
-        set_status(hwnd, msg);
-    } else {
-        rebind_prompt(hwnd);
+    uint32_t lag = g_config.lag_model ? g_lag_cycles : 0u;
+    if (lag != g_lag_budget) {
+        g_lag_budget = lag;
+        g_ctx.lag_budget = lag;
+        g_ctx.lag_debt = 0u;
     }
-    return true;
+    g_extras.flags = g_cli_extras |
+                     (g_config.stage_select   ? CONTRA3_UNLOCK_STAGE_SELECT : 0u) |
+                     (g_config.lives_30       ? CONTRA3_UNLOCK_LIVES_30 : 0u) |
+                     (g_config.infinite_lives ? CONTRA3_UNLOCK_INFINITE_LIVES : 0u);
+    g_extras.start_stage = (g_cli_start_stage >= 0) ? (unsigned)g_cli_start_stage : g_config.start_stage;
+}
+
+static void overlay_open(HWND hwnd, C3OverlayPage page) {
+    (void)hwnd;
+    c3_overlay_open_at(&g_overlay, page);
+    g_overlay_status[0] = '\0';
+    if (g_waveout != NULL) {
+        waveOutReset(g_waveout);
+    }
+    snes_apu_clear_samples(&g_apu);
+    rumble_send(true);
+}
+
+static void overlay_closed(void) {
+    if (g_overlay.dirty) {
+        c3_config_save(&g_config);
+        g_overlay.dirty = false;
+    }
 }
 static uint32_t g_frame_number    = 0u;   /* Frames stepped since launch (for diagnostics) */
 
@@ -544,6 +601,54 @@ static void toggle_recording(HWND hwnd) {
     set_status(hwnd, msg);
 }
 
+static void overlay_action(HWND hwnd, C3OverlayAction act) {
+    switch (act) {
+        case C3ACT_RESUME:
+            overlay_closed();
+            break;
+        case C3ACT_SAVE_STATE: {
+            SnesSavestateResult r = snes_savestate_save("contra3_quicksave.state", &g_ctx, &g_apu);
+            snprintf(g_overlay_status, sizeof(g_overlay_status), "%s",
+                     r == SNES_SAVESTATE_OK ? "STATE SAVED" : "SAVE FAILED - TRY AGAIN");
+            break;
+        }
+        case C3ACT_LOAD_STATE: {
+            SnesSavestateResult r = snes_savestate_load("contra3_quicksave.state", &g_ctx, &g_apu);
+            if (r == SNES_SAVESTATE_OK) {
+                c3_overlay_close(&g_overlay);
+                overlay_closed();
+                set_status(hwnd, "State loaded");
+            } else {
+                snprintf(g_overlay_status, sizeof(g_overlay_status), "NO USABLE SAVE STATE");
+            }
+            break;
+        }
+        case C3ACT_RESET:
+            overlay_closed();
+            soft_reset(&g_ctx, &g_apu);
+            g_rec_pending_flags |= SNES_MOVIE_FLAG_RESET;
+            break;
+        case C3ACT_QUIT:
+            overlay_closed();
+            g_running = false;
+            DestroyWindow(hwnd);
+            break;
+        case C3ACT_TEST_RUMBLE:
+            c3_rumble_test(&g_rumble, 0u);
+            c3_rumble_test(&g_rumble, 1u);
+            break;
+        case C3ACT_TOGGLE_FULLSCREEN:
+            toggle_fullscreen(hwnd);
+            break;
+        default:
+            break;
+    }
+    if (g_overlay.mute_request) {
+        g_overlay.mute_request = false;
+        g_audio_muted = !g_audio_muted;
+    }
+}
+
 static LRESULT CALLBACK contra3_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     switch (msg) {
         case WM_CLOSE:
@@ -562,7 +667,8 @@ static LRESULT CALLBACK contra3_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPAR
             return 0;
         }
         case WM_SYSKEYDOWN:
-            if ((lparam & 0x40000000) == 0 && rebind_handle_key(hwnd, wparam, lparam)) {
+            if (g_overlay.open && c3_overlay_capturing(&g_overlay) && (lparam & 0x40000000) == 0) {
+                c3_overlay_capture_key(&g_overlay, &g_config, vk_to_c3(wparam, lparam)); /* Alt keys */
                 return 0;
             }
             if (wparam == VK_RETURN && (lparam & (1 << 29)) != 0) {
@@ -572,16 +678,34 @@ static LRESULT CALLBACK contra3_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPAR
             break;
         case WM_KEYDOWN: {
             bool repeat = (lparam & 0x40000000) != 0;
-            if (!repeat && rebind_handle_key(hwnd, wparam, lparam)) {
+            if (g_overlay.open) {
+                if (c3_overlay_capturing(&g_overlay)) {
+                    if (!repeat) {
+                        c3_overlay_capture_key(&g_overlay, &g_config, vk_to_c3(wparam, lparam));
+                    }
+                    return 0;
+                }
+                int nav = -1;
+                switch (wparam) {
+                    case VK_UP:     nav = C3NAV_UP; break;
+                    case VK_DOWN:   nav = C3NAV_DOWN; break;
+                    case VK_LEFT:   nav = C3NAV_LEFT; break;
+                    case VK_RIGHT:  nav = C3NAV_RIGHT; break;
+                    case VK_RETURN: case VK_SPACE: nav = repeat ? -1 : C3NAV_OK; break;
+                    case VK_ESCAPE: case VK_BACK:  nav = repeat ? -1 : C3NAV_BACK; break;
+                    default: break;
+                }
+                if (nav >= 0) {
+                    overlay_action(hwnd, c3_overlay_nav(&g_overlay, &g_config, (C3Nav)nav));
+                }
                 return 0;
             }
             if (!repeat) {
                 bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
                 if (wparam == VK_F2) {
-                    rebind_start(hwnd, shift ? 1 : 0);
+                    overlay_open(hwnd, shift ? C3OV_KEYS_P2 : C3OV_KEYS_P1);
                 } else if (wparam == VK_ESCAPE) {
-                    g_running = false;
-                    DestroyWindow(hwnd);
+                    overlay_open(hwnd, C3OV_MAIN);
                     return 0;
                 } else if (wparam == 'P' || wparam == VK_PAUSE) {
                     g_paused = !g_paused;
@@ -598,18 +722,18 @@ static LRESULT CALLBACK contra3_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPAR
                 } else if (wparam == VK_SPACE && g_paused) {
                     g_step_once = true;
                 } else if (wparam == VK_F4 && shift) {
-                    g_extras.flags ^= CONTRA3_UNLOCK_INFINITE_LIVES;
-                    set_status(hwnd, (g_extras.flags & CONTRA3_UNLOCK_INFINITE_LIVES)
-                                         ? "Infinite lives ON" : "Infinite lives OFF");
+                    g_config.infinite_lives = !g_config.infinite_lives;
+                    g_config_dirty = true;
+                    set_status(hwnd, g_config.infinite_lives ? "Infinite lives ON" : "Infinite lives OFF");
                 } else if (wparam == VK_F4) {
-                    g_extras.flags ^= CONTRA3_UNLOCK_STAGE_SELECT;
-                    set_status(hwnd, (g_extras.flags & CONTRA3_UNLOCK_STAGE_SELECT)
-                                         ? "Stage select ON (press START on the title screen)" : "Stage select OFF");
+                    g_config.stage_select = !g_config.stage_select;
+                    g_config_dirty = true;
+                    set_status(hwnd, g_config.stage_select ? "Stage select ON (press START on the title screen)"
+                                                           : "Stage select OFF");
                 } else if (wparam == VK_F3) {
-                    g_lag_budget = (g_lag_budget != 0u) ? 0u : SNES_LAG_BUDGET_DEFAULT;
-                    g_ctx.lag_budget = g_lag_budget;
-                    g_ctx.lag_debt = 0u;
-                    set_status(hwnd, g_lag_budget ? "Authentic slowdown ON (lag model)" : "Authentic slowdown OFF");
+                    g_config.lag_model = !g_config.lag_model;
+                    g_config_dirty = true;
+                    set_status(hwnd, g_config.lag_model ? "Authentic slowdown ON (lag model)" : "Authentic slowdown OFF");
                 } else if (wparam == VK_F1) {
                     g_turbo_toggle = !g_turbo_toggle;
                 } else if (wparam == VK_F5) {
@@ -634,9 +758,12 @@ static LRESULT CALLBACK contra3_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPAR
                 } else if (wparam == VK_F6) {
                     toggle_recording(hwnd);
                 } else if (wparam == VK_F9 && g_use_gl) {
-                    g_gl_filter = (Win32GlFilter)((g_gl_filter + 1) % WIN32_GL_FILTER_COUNT);
+                    static const char *const next[] = { "nearest", "crt", "sharp" };
+                    snprintf(g_config.filter, sizeof(g_config.filter), "%s", next[g_gl_filter]);
+                    g_config_dirty = true;
                 } else if (wparam == VK_F10 && g_use_gl) {
-                    g_integer_scale = !g_integer_scale;
+                    g_config.integer_scale = !g_config.integer_scale;
+                    g_config_dirty = true;
                 } else if (wparam == VK_F11) {
                     toggle_fullscreen(hwnd);
                 } else if (wparam == VK_F12) {
@@ -1299,7 +1426,7 @@ int main(int argc, char **argv) {
     const char *lag_path = NULL;
     bool headless = false;
     bool force_gdi = false;
-    bool cli_filter = false, cli_integer = false, cli_vsync = false, cli_lag = false, cli_start_stage = false;
+    bool cli_filter = false, cli_integer = false, cli_vsync = false, cli_lag = false;
     const char *gl_selftest = NULL;
     ScriptPress presses[64];
     ScriptDump dumps[64];
@@ -1365,14 +1492,17 @@ int main(int argc, char **argv) {
             opt.verify = true;
         } else if (strcmp(argv[i], "--stage-select") == 0) {
             g_extras.flags |= CONTRA3_UNLOCK_STAGE_SELECT;
+            g_cli_extras |= CONTRA3_UNLOCK_STAGE_SELECT;
         } else if (strcmp(argv[i], "--30-lives") == 0) {
             g_extras.flags |= CONTRA3_UNLOCK_LIVES_30;
+            g_cli_extras |= CONTRA3_UNLOCK_LIVES_30;
         } else if (strcmp(argv[i], "--infinite-lives-cheat") == 0) {
             g_extras.flags |= CONTRA3_UNLOCK_INFINITE_LIVES;
+            g_cli_extras |= CONTRA3_UNLOCK_INFINITE_LIVES;
         } else if (strcmp(argv[i], "--start-stage") == 0 && i + 1 < argc) {
             unsigned st = (unsigned)strtoul(argv[++i], NULL, 10);
             g_extras.start_stage = (st >= 1u && st <= 6u) ? st : 0u;
-            cli_start_stage = true;
+            g_cli_start_stage = (int)g_extras.start_stage;
         } else if (strcmp(argv[i], "--lag-model") == 0) {
             /* Optional numeric budget may follow: --lag-model 45642 */
             g_lag_budget = SNES_LAG_BUDGET_DEFAULT;
@@ -1483,29 +1613,25 @@ int main(int argc, char **argv) {
         return rc;
     }
 
-    contra3_config_load(&g_config, exe_dir);
-    if (!cli_filter) {
-        g_gl_filter = (strcmp(g_config.filter, "crt") == 0)     ? WIN32_GL_FILTER_CRT :
-                      (strcmp(g_config.filter, "nearest") == 0) ? WIN32_GL_FILTER_NEAREST : WIN32_GL_FILTER_SHARP;
+    c3_config_load(&g_config, exe_dir);
+    /* Command-line video/lag options override the ini for this session */
+    if (cli_filter) {
+        static const char *const names[] = { "sharp", "nearest", "crt" };
+        snprintf(g_config.filter, sizeof(g_config.filter), "%s", names[g_gl_filter]);
     }
-    if (!cli_integer) {
-        g_integer_scale = g_config.integer_scale;
+    if (cli_integer) g_config.integer_scale = true;
+    if (cli_vsync)   g_config.vsync = true;
+    if (cli_lag) {
+        g_config.lag_model = true;
+        g_lag_cycles = g_lag_budget;
     }
-    if (!cli_vsync) {
-        g_vsync = g_config.vsync;
-    }
-    if (!cli_lag) {
-        g_lag_budget = g_config.lag_model ? SNES_LAG_BUDGET_DEFAULT : 0u;
-    }
-    if (g_config.stage_select)   g_extras.flags |= CONTRA3_UNLOCK_STAGE_SELECT;
-    if (g_config.lives_30)       g_extras.flags |= CONTRA3_UNLOCK_LIVES_30;
-    if (g_config.infinite_lives) g_extras.flags |= CONTRA3_UNLOCK_INFINITE_LIVES;
-    if (!cli_start_stage)        g_extras.start_stage = g_config.start_stage;
     const Contra3Config config_at_start = g_config;
-    const unsigned extras_at_start = g_extras.flags;
-    const Win32GlFilter start_filter = g_gl_filter;
-    const bool start_integer = g_integer_scale;
-    const uint32_t start_lag = g_lag_budget;
+    bool vsync_requested = g_config.vsync;
+    g_vsync = vsync_requested;
+    apply_config();
+    c3_overlay_init(&g_overlay);
+    contra3_events_reset(&g_events);
+    c3_rumble_reset(&g_rumble);
     init_xinput();
     win32_audio_init();
     power_on(&g_ctx, &g_apu, rom, rom_size);
@@ -1585,7 +1711,59 @@ int main(int argc, char **argv) {
 
         bool turbo = g_turbo_toggle || ((GetForegroundWindow() == hwnd) && ((GetAsyncKeyState(VK_TAB) & 0x8000) != 0));
 
-        if ((!g_paused || g_step_once) && g_rebind_player < 0) {
+        /* Gamepads: Back+Start toggles the overlay; inside it the D-pad / stick navigate, A = OK, B = back */
+        {
+            static WORD prev_buttons[2];
+            static int  repeat_timer = 0;
+            static int  held_dir = -1;
+            int dir = -1;
+            for (DWORD p = 0u; p < 2u; ++p) {
+                Win32XInputState st;
+                WORD b = read_xinput(p, &st) ? st.Gamepad.wButtons : 0u;
+                WORD pressed = (WORD)(b & ~prev_buttons[p]);
+                prev_buttons[p] = b;
+                bool chord = (b & XINPUT_BTN_BACK) && (b & XINPUT_BTN_START) &&
+                             (pressed & (XINPUT_BTN_BACK | XINPUT_BTN_START));
+                if (chord) {
+                    if (g_overlay.open) {
+                        c3_overlay_close(&g_overlay);
+                        overlay_closed();
+                    } else {
+                        overlay_open(hwnd, C3OV_MAIN);
+                    }
+                    continue;
+                }
+                if (!g_overlay.open || c3_overlay_capturing(&g_overlay)) {
+                    continue;
+                }
+                if (pressed & XINPUT_BTN_A) overlay_action(hwnd, c3_overlay_nav(&g_overlay, &g_config, C3NAV_OK));
+                if (pressed & XINPUT_BTN_B) overlay_action(hwnd, c3_overlay_nav(&g_overlay, &g_config, C3NAV_BACK));
+                if ((b & XINPUT_BTN_DPAD_UP)    || st.Gamepad.sThumbLY >  16000) dir = C3NAV_UP;
+                if ((b & XINPUT_BTN_DPAD_DOWN)  || st.Gamepad.sThumbLY < -16000) dir = C3NAV_DOWN;
+                if ((b & XINPUT_BTN_DPAD_LEFT)  || st.Gamepad.sThumbLX < -16000) dir = C3NAV_LEFT;
+                if ((b & XINPUT_BTN_DPAD_RIGHT) || st.Gamepad.sThumbLX >  16000) dir = C3NAV_RIGHT;
+            }
+            if (g_overlay.open && dir >= 0) {
+                if (dir != held_dir) {
+                    held_dir = dir;
+                    repeat_timer = 18;   /* first repeat after ~0.3 s, then every 5 frames */
+                    overlay_action(hwnd, c3_overlay_nav(&g_overlay, &g_config, (C3Nav)dir));
+                } else if (--repeat_timer <= 0) {
+                    repeat_timer = 5;
+                    overlay_action(hwnd, c3_overlay_nav(&g_overlay, &g_config, (C3Nav)dir));
+                }
+            } else {
+                held_dir = -1;
+            }
+        }
+        apply_config();
+        unsigned events = 0u;
+
+        if (g_overlay.open) {
+            C3OverlayEnv env = { g_use_gl, g_fullscreen, g_audio_muted, g_overlay_status };
+            c3_overlay_render(&g_overlay, &g_config, &env, g_framebuf, g_overlay_buf);
+            win32_audio_pump(false, true);
+        } else if (!g_paused || g_step_once) {
             uint16_t pad1, pad2;
             uint8_t  flags = g_rec_pending_flags;
             g_rec_pending_flags = 0u;
@@ -1608,6 +1786,7 @@ int main(int argc, char **argv) {
             g_frame_number++;
             snes_step_frame(&g_ctx, pad1, pad2, g_framebuf);
             contra3_extras_apply(&g_ctx, &g_extras);
+            events = contra3_events_poll(&g_ctx, &g_events, pad1, pad2);
             snes_movie_record_frame(&g_recorder, pad1, pad2, flags);
             win32_audio_pump(turbo, false);
             g_step_once = false;
@@ -1615,6 +1794,10 @@ int main(int argc, char **argv) {
         } else {
             win32_audio_pump(false, true);
         }
+
+        /* Rumble envelopes advance in real time (also while paused, so the overlay test pulse plays) */
+        c3_rumble_frame(&g_rumble, events, g_config.rumble_strength, g_config.rumble && GetForegroundWindow() == hwnd);
+        rumble_send(false);
 
         present_framebuffer(hwnd, hdc);
 
@@ -1645,7 +1828,7 @@ int main(int argc, char **argv) {
                 size_t len = strlen(title);
                 snprintf(title + len, sizeof(title) - len, " | %s", g_status);
             }
-            SetWindowTextA(hwnd, (g_rebind_player >= 0) ? g_rebind_prompt : title);
+            SetWindowTextA(hwnd, title);
             fps_timer = now;
             frames_this_sec = 0u;
         }
@@ -1671,17 +1854,7 @@ int main(int argc, char **argv) {
 
     timeEndPeriod(1u);
     {
-        /* Persist runtime changes: video/lag toggles, extras toggles, and the OPTION MODE values */
-        if (g_gl_filter != start_filter || g_integer_scale != start_integer || (g_lag_budget != 0u) != (start_lag != 0u)) {
-            static const char *const filter_names[] = { "sharp", "nearest", "crt" };
-            snprintf(g_config.filter, sizeof(g_config.filter), "%s", filter_names[g_gl_filter]);
-            g_config.integer_scale = g_integer_scale;
-            g_config.lag_model = g_lag_budget != 0u;
-        }
-        if (g_extras.flags != extras_at_start) {
-            g_config.stage_select   = (g_extras.flags & CONTRA3_UNLOCK_STAGE_SELECT) != 0u;
-            g_config.infinite_lives = (g_extras.flags & CONTRA3_UNLOCK_INFINITE_LIVES) != 0u;
-        }
+        /* Persist the OPTION MODE values and anything changed through hotkeys or the overlay */
         if (g_recorder.fp == NULL && !g_movie_active) {
             Contra3Options o;
             contra3_options_read(&g_ctx, &o);
@@ -1697,9 +1870,10 @@ int main(int argc, char **argv) {
                 g_config.have_options = true;
             }
         }
-        if (memcmp(&g_config, &config_at_start, sizeof(g_config)) != 0) {
-            contra3_config_save(&g_config);
+        if (g_config_dirty || memcmp(&g_config, &config_at_start, sizeof(g_config)) != 0) {
+            c3_config_save(&g_config);
         }
+        rumble_send(true);
     }
     snes_movie_record_end(&g_recorder);
     win32_audio_shutdown();

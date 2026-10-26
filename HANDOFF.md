@@ -61,7 +61,10 @@ The CPU budget is calibrated (45,000; see `ARCHITECTURE.md` §7.7), but `--lag-m
 The SPC700 now runs on the CPU's timeline (`snes_apu_sync` before every `$2140–$2143` access, plus every frame boundary), so upload handshakes and loads take real time. The emulator comparison in §A/§A2 is also the way to validate load durations: Stage 1 intro card about 4 s, power-on about 2 s with `--lag-model`.
 
 ### B. Polish status
-- **Done**: `contra3.ini` with key rebinding for both players (in-window wizard on F2 / Shift+F2), gamepad remapping and deadzone, persisted video, lag-model and extras preferences, and the in-game OPTION MODE settings saved and restored across restarts. Extras in `src/contra3_extras.c`: the restored STAGE SELECT screen (`--stage-select` / F4), 30 lives (`--30-lives`), infinite lives (`--infinite-lives-cheat` / Shift+F4) and start stage (`--start-stage N`). Smoke test 11 covers the options restore (including mono sound), start stage and infinite lives.
+- **Done**: an in-game settings menu (`src/c3_overlay.c`, Esc or Back+Start): video, audio, keyboard and gamepad remapping, rumble, cheats & extras, save/load state, reset. It is drawn into the game frame with a built-in font, so it works with every presenter and filter.
+- **Done**: controller rumble (`src/contra3_events.c` + `src/c3_rumble.c`). Deaths, Mega Bombs and boss blasts are read from the game's sound queue (`$0100` ring, write index `$56`; death `$3F`/`$43`, Mega Bomb `$5A`, boss blast `$56`) and attributed to a player by the actor slot entering its `$ACxx` death handler, the slot's `+$12` state becoming 7, or the lives counter dropping. On the 12 stage movies the detected deaths equal the lives lost for each player. XInput on Windows, `SDL_GameControllerRumble` elsewhere.
+- **Done**: Linux and macOS through the SDL2 frontend (`src/sdl_main.c`), the portable GL presenter (`src/gl_present.c`) and the pthread main-thread backend. CI (`.github/workflows/build.yml`) builds Linux (gcc, clang), macOS and Windows (MSYS2) and runs the ROM-free unit tests.
+- **Done**: `contra3.ini` (now portable, `src/c3_config.c`) with key rebinding for both players (overlay, or F2 / Shift+F2 straight to the key list), gamepad remapping and deadzone, persisted video, lag-model and extras preferences, and the in-game OPTION MODE settings saved and restored across restarts. Extras in `src/contra3_extras.c`: the restored STAGE SELECT screen (`--stage-select` / F4), 30 lives (`--30-lives`), infinite lives (`--infinite-lives-cheat` / Shift+F4) and start stage (`--start-stage N`). Smoke test 11 covers the options restore (including mono sound), start stage and infinite lives.
 - **Not possible**: the *Contra Spirits* Sound Test. Only its code detector (`$00:B2F3`) survives, and the screen itself isn't in the US ROM. The code tables at `$05:86D3+` were overwritten and the detectors' `$1C08–$1C13` state is reused by other screens, so the effects are applied directly rather than re-enabling the detectors.
 - **Deliberately skipped**: battery-style persistence of the whole `$1E00–$1FFF` block. The cartridge has no SRAM, and that block mixes options with PPU shadows, Mode 7 buffers and the `KONAMI` warm-boot signature. Only the three OPTION MODE values are persisted instead (`[options]`).
 - **Sound-mode gotcha**: stereo/mono reaches the SPC700 driver as command `$7E`/`$7F` (`$00:868F` queue, table `$05:892A`). The driver ignores it until the title music is running: sent on the first title frame, or by the game's own re-send at stage start, it has no effect. The restore therefore queues it after 30 title frames (`Contra3Extras.sound_pending`).
@@ -82,3 +85,10 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 .\build\contra3.exe --gl-selftest build\gltest
 python .\tools\soak_all_stages.py --frames 36000
 ```
+
+Linux / macOS (SDL2 frontend, pthread main thread):
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCONTRA3_ROM="/path/to/Contra III - The Alien Wars (USA).sfc"
+cmake --build build && ctest --test-dir build --output-on-failure
+```
+To check the pthread backend on Windows, build the library with `-DC3_MAINTHREAD_PTHREAD`: the golden replays must keep the same hashes.

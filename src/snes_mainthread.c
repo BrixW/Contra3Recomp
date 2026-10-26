@@ -7,7 +7,7 @@
  * for the job (it polls $0052), so a job that takes N frames of CPU time delays the game by
  * N logic frames.
  *
- * The recompiled main thread runs as a coroutine (Win32 fiber, or POSIX ucontext). Generated
+ * The recompiled main thread runs as a coroutine (Win32 fiber, or a pthread with strict handoff). Generated
  * code charges cycles before every instruction through SNES_CYCLES, which switches back to
  * the host once the CPU's wall time reaches the next NMI (ctx->yield_at). snes_step_frame
  * then runs the NMI on the host and resumes the main thread until the following NMI. Main
@@ -23,7 +23,7 @@
 
 #define MAIN_THREAD_STACK (4u * 1024u * 1024u)
 
-#if defined(_WIN32)
+#if defined(_WIN32) && !defined(C3_MAINTHREAD_PTHREAD)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
@@ -74,51 +74,94 @@ static void destroy_fiber(MainThread *mt) {
 }
 
 #else
-#include <ucontext.h>
+/*
+ * Portable backend (Linux, macOS, or Windows built with -DC3_MAINTHREAD_PTHREAD): the main
+ * thread is a real pthread, but only one side ever runs - control is handed back and forth
+ * with a mutex + condition variable, so execution stays strictly sequential and
+ * deterministic, exactly like the fiber backend.
+ */
+#include <pthread.h>
 
 typedef struct MainThread {
     SnesCpuContext *ctx;
-    ucontext_t      host_uc;
-    ucontext_t      main_uc;
-    void           *stack;
+    pthread_t       thread;
+    pthread_mutex_t lock;
+    pthread_cond_t  cond;
+    int             turn;         /* 0 = host runs, 1 = main thread runs */
+    bool            quit;
+    bool            started;
     SnesMainEntry   entry;
     bool            running;
     bool            finished;
 } MainThread;
 
+static void main_body(MainThread *mt);
+
 static void switch_to_host(MainThread *mt) {
+    pthread_mutex_lock(&mt->lock);
     mt->running = false;
-    swapcontext(&mt->main_uc, &mt->host_uc);
+    mt->turn = 0;
+    pthread_cond_broadcast(&mt->cond);
+    while (mt->turn == 0 && !mt->quit) {
+        pthread_cond_wait(&mt->cond, &mt->lock);
+    }
+    bool quit = mt->quit;
+    pthread_mutex_unlock(&mt->lock);
+    if (quit) {
+        pthread_exit(NULL);   /* the coroutine is being destroyed; never resume it */
+    }
 }
 
 static void switch_to_main(MainThread *mt) {
+    pthread_mutex_lock(&mt->lock);
     mt->running = true;
-    swapcontext(&mt->host_uc, &mt->main_uc);
+    mt->turn = 1;
+    pthread_cond_broadcast(&mt->cond);
+    while (mt->turn == 1) {
+        pthread_cond_wait(&mt->cond, &mt->lock);
+    }
+    pthread_mutex_unlock(&mt->lock);
 }
 
-static void main_body(MainThread *mt);
-static MainThread *g_uc_start;
-
-static void uc_proc(void) {
-    main_body(g_uc_start);
+static void *thread_proc(void *param) {
+    MainThread *mt = (MainThread *)param;
+    pthread_mutex_lock(&mt->lock);
+    while (mt->turn == 0 && !mt->quit) {
+        pthread_cond_wait(&mt->cond, &mt->lock);
+    }
+    bool quit = mt->quit;
+    pthread_mutex_unlock(&mt->lock);
+    if (!quit) {
+        main_body(mt);
+    }
+    return NULL;
 }
 
 static bool create_fiber(MainThread *mt) {
-    mt->stack = malloc(MAIN_THREAD_STACK);
-    if (mt->stack == NULL || getcontext(&mt->main_uc) != 0) {
-        return false;
-    }
-    mt->main_uc.uc_stack.ss_sp = mt->stack;
-    mt->main_uc.uc_stack.ss_size = MAIN_THREAD_STACK;
-    mt->main_uc.uc_link = &mt->host_uc;
-    g_uc_start = mt;
-    makecontext(&mt->main_uc, uc_proc, 0);
-    return true;
+    pthread_mutex_init(&mt->lock, NULL);
+    pthread_cond_init(&mt->cond, NULL);
+    mt->turn = 0;
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, MAIN_THREAD_STACK);
+    int rc = pthread_create(&mt->thread, &attr, thread_proc, mt);
+    pthread_attr_destroy(&attr);
+    mt->started = (rc == 0);
+    return mt->started;
 }
 
 static void destroy_fiber(MainThread *mt) {
-    free(mt->stack);
-    mt->stack = NULL;
+    if (!mt->started) {
+        return;
+    }
+    pthread_mutex_lock(&mt->lock);
+    mt->quit = true;
+    pthread_cond_broadcast(&mt->cond);
+    pthread_mutex_unlock(&mt->lock);
+    pthread_join(mt->thread, NULL);
+    pthread_cond_destroy(&mt->cond);
+    pthread_mutex_destroy(&mt->lock);
+    mt->started = false;
 }
 #endif
 

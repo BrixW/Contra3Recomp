@@ -197,14 +197,14 @@ Prints every game-state, stage and NMI-mode transition, flags a **hang** when th
 
 ### 7.5 CPU Time Model (`SNES_CYCLES`, `--lag-model`)
 - **Charging**: `tools/translate_rom.py` emits `SNES_CYCLES(ctx, n)` before every instruction, using the WDC 65C816 native-mode table (`insn_cycles`): +1 for 16-bit M or X where it applies, +2 for 16-bit read-modify-write, `SNES_DP_PENALTY` (+1 when `D & $FF != 0`, which is common because Contra III points `D` at 64-byte actor slots), and +1 on taken conditional branches. Dynamic M-width merge points use a `flag_m` ternary. The runtime adds MVN/MVP (7 cycles per byte) and general DMA (1 cycle per byte plus 8 per channel). Page-crossing penalties and the 6/8/12-clock memory-speed split are folded into one average of about 7.6 master clocks per CPU cycle.
-- **Budget**: 357,368 master clocks per NTSC frame minus DRAM refresh, divided by 7.6, gives **45,642** CPU cycles (`SNES_LAG_BUDGET_DEFAULT`).
+- **Budget**: 357,368 master clocks per NTSC frame minus DRAM refresh, divided by 7.6, gives about 45,642 CPU cycles. `SNES_LAG_BUDGET_DEFAULT` is **45,000**, calibrated against snes9x (§7.7).
 - **Shared timeline** (`snes_step_frame`, `src/snes_runtime.c`): wall time = `cycles + idle_cycles`. NMIs fire on a fixed grid (`nmi_wall`, one budget apart). The SPC700 time at each grid point advances by exactly 1,024,000 Hz ÷ 60.0988 Hz, about 17,038.6 cycles per frame, with an integer running fraction, and wall time maps linearly onto it. If the CPU is still busy when the grid NMI fires, that frame is a lag frame: the hardware `$003C` guard path, no background-worker slices, unchanged scanout. Without `--lag-model` the grid slides to "now" instead, so video never drops frames. Waiting for vblank adds idle time, and so does the main-thread `VBlank_WaitFrame` (`snes_cooperative_nmi`, emitted at `$00:85EC`).
 - **Measured load** (soak bot, normal play): Stage 1 1P averages 24.7k cycles with a 99th percentile of 45k. Stage 4 2P averages 32k with a 99th percentile of 59k, and the 2P overhead Stage 2 averages 33k with a 99th percentile of 51k. Multi-million-cycle NMIs occur only at transitions (stage intro, first gameplay frame, stage-clear tally), from synchronous decompression and SPC700 sample uploads.
-- **Known gaps**: the cycle costs ignore page crossings and the exact 6/8/12-clock memory-speed split, and the budget hasn't been calibrated against hardware. `tools/compare_trace.py --lag-report` measures recall and precision of lag frames against an emulator trace.
+- **Known gaps**: the cycle costs ignore page crossings and the exact 6/8/12-clock memory-speed split, and lag frames themselves haven't been compared against hardware yet. `tools/compare_trace.py --lag-report` measures recall and precision of lag frames against an emulator trace.
 
 ### 7.6 Preemptible Main Thread (`src/snes_mainthread.c`)
 - **Model**: on hardware, the RESET code ends in the background loop at `$00:8166` (`JSL $00995A; BRA`). That loop performs long jobs requested by NMI code: `$0052 = $FF` triggers the SPC700 streaming upload at `$00:98E2`. NMIs keep interrupting it every frame, and the game logic in those NMIs waits on `$0052`, so a job that takes N frames of CPU time delays the game by N logic frames.
-- **Implementation**: the main thread runs as a coroutine (a Win32 fiber, or POSIX `ucontext`). `SNES_CYCLES`, emitted before every generated instruction, compares `ctx->cycles` with `yield_cycles` and switches back to the host when the CPU's wall time reaches the next NMI. `snes_step_frame` runs the NMI on the host, then calls `snes_mainthread_run_until(next NMI)`. Main-thread VBlank waits (`$00:85DF` spinning at `$00:85EC`) yield until the next NMI, which takes Konami's `$003C` busy path exactly as on hardware. With no job pending, the idle loop skips straight to the next NMI. DMA and MVN/MVP charge cycles without yielding, since an NMI can't split a DMA.
+- **Implementation**: the main thread runs as a coroutine (a Win32 fiber, or elsewhere a pthread with a strict handoff: one mutex + condition variable and a turn flag, so exactly one side runs at a time and the result is deterministic). `SNES_CYCLES`, emitted before every generated instruction, compares `ctx->cycles` with `yield_cycles` and switches back to the host when the CPU's wall time reaches the next NMI. `snes_step_frame` runs the NMI on the host, then calls `snes_mainthread_run_until(next NMI)`. Main-thread VBlank waits (`$00:85DF` spinning at `$00:85EC`) yield until the next NMI, which takes Konami's `$003C` busy path exactly as on hardware. With no job pending, the idle loop skips straight to the next NMI. DMA and MVN/MVP charge cycles without yielding, since an NMI can't split a DMA.
 - **Entry points**: `snes_power_on` (`$00:8000`) and `snes_soft_reset` (`$00:80A3`). Boot now spans about 105 video frames before the first logic frame, as on hardware.
 - **Save states**: a coroutine stack can't be serialised, so `snes_savestate_save` returns `SNES_SAVESTATE_BUSY` unless the main thread is parked in the idle loop (it almost always is during play). Loading recreates the coroutine in the idle loop.
 - **Why it matters**: before this change, a background job finished inside a single frame. Stage 6 2P then diverged from snes9x when a mid-stage upload released the camera lock early. With the preemptible main thread, all 13 equivalence scenarios match.
@@ -216,3 +216,23 @@ Prints every game-state, stage and NMI-mode transition, flags a **hang** when th
 - **Input**: the movie advances per logic frame on both sides (`contra3.exe --movie-logic`, `tests/golden` `movie-logic`), so the emulator's lag frames (Konami's busy guard) can't shift the input.
 - **Calibration**: every scenario is bit-exact for `--cpu-budget` of about 44,700–45,150; outside that window only the Stage 6 2P upload timing diverges. `SNES_LAG_BUDGET_DEFAULT` is 45,000.
 
+
+---
+
+## 8. Frontends and Shared Desktop Layer
+
+Two frontends sit on the same portable layer:
+
+| Piece | File | Notes |
+| :--- | :--- | :--- |
+| Win32 runner | `src/win32_main.c`, `src/win32_gl.c` | WGL / GDI, `waveOut` 48 kHz (Catmull-Rom), XInput (rumble via a dynamically loaded `XInputSetState`), headless verification CLI |
+| SDL2 runner | `src/sdl_main.c` | Linux, macOS, Windows. GL 3.3 Core via `SDL_GL_GetProcAddress` or `SDL_Renderer`, `SDL_QueueAudio` at 32 kHz (SDL resamples), GameController input + rumble |
+| GL presenter | `src/gl_present.c` | Takes a loader callback, so it needs no platform GL headers or import libraries. The caller swaps buffers |
+| Settings | `src/c3_config.c` | `contra3.ini`. Keys are abstract `C3Key`s; each frontend has a table to its native codes (virtual keys, SDL scancodes) |
+| Menu | `src/c3_overlay.c` | Renders into a 256x224 ARGB buffer (dimmed game + panel + 5x7 font). Input is abstract `C3Nav`, or a `C3Key` while capturing a binding; it returns `C3OverlayAction`s for the frontend to carry out |
+| Rumble | `src/contra3_events.c`, `src/c3_rumble.c` | Events per frame from WRAM, then envelopes into motor levels (0–65535) |
+
+### 8.1 Event Detection for Rumble (`contra3_events_poll`)
+- **Source**: the SPC700 command ring at `$0100` with write index `$56`. New entries since the last poll are scanned: `$3F` and `$43` (stage 3) are death sounds, `$5A` the Mega Bomb, `$56` a boss blast. More than 32 new entries, or a game state other than `$09` (play), resynchronise the read index without reporting anything.
+- **Attribution**: a death sound is given to the player whose actor slot (`$0200` / `$0240`) entered a `$ACxx` handler this frame, or whose slot `+$12` became 7, or whose lives counter (`$1F8A` / `$1FCA`) dropped. The last two cover the overhead stages and stage 6, where the handler check alone fails. A Mega Bomb goes to the player who pressed A (the SNES bomb button) that frame.
+- **Validation**: on all 12 stage movies (1P and 2P), detected deaths per player equal the lives lost.

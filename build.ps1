@@ -28,6 +28,10 @@ $Sources = @(
     "snes_rom",
     "snes_mainthread",
     "contra3_extras",
+    "contra3_events",
+    "c3_config",
+    "c3_overlay",
+    "c3_rumble",
     "bank_00",
     "bank_01",
     "bank_02",
@@ -58,9 +62,29 @@ if (Test-Path $AppSrc) {
     $AppExe = Join-Path $BuildDir "contra3.exe"
     Write-Host "[LD] build/contra3.exe"
     $GlSrc = Join-Path $RootDir "src\win32_gl.c"
-    $CfgSrc = Join-Path $RootDir "src\win32_config.c"
-    & $Gcc -std=c11 -O2 -Wall -Wextra -Werror -I"$RootDir\include" $AppSrc $GlSrc $CfgSrc $LibPath -lopengl32 -lgdi32 -lwinmm -lcomdlg32 -o $AppExe
+    $GlpSrc = Join-Path $RootDir "src\gl_present.c"
+    & $Gcc -std=c11 -O2 -Wall -Wextra -Werror -I"$RootDir\include" $AppSrc $GlSrc $GlpSrc $LibPath -lopengl32 -lgdi32 -lwinmm -lcomdlg32 -o $AppExe
     if ($LASTEXITCODE -ne 0) { throw "Desktop app build failed" }
+}
+
+# Optional SDL2 frontend: set $env:CONTRA3_SDL2 to an SDL2 MinGW dev folder (x86_64-w64-mingw32)
+if ($env:CONTRA3_SDL2) {
+    $SdlExe = Join-Path $BuildDir "contra3_sdl.exe"
+    Write-Host "[LD] build/contra3_sdl.exe"
+    & $Gcc -std=c11 -O2 -Wall -Wextra -Werror -I"$RootDir\include" -I"$env:CONTRA3_SDL2\include\SDL2" (Join-Path $RootDir "src\sdl_main.c") (Join-Path $RootDir "src\gl_present.c") $LibPath -L"$env:CONTRA3_SDL2\lib" -lmingw32 -lSDL2main -lSDL2 -o $SdlExe
+    if ($LASTEXITCODE -ne 0) { throw "SDL2 frontend build failed" }
+    Copy-Item (Join-Path $env:CONTRA3_SDL2 "bin\SDL2.dll") $BuildDir -Force
+}
+
+$UnitSrc = Join-Path $RootDir "tests\unit_test.c"
+if (Test-Path $UnitSrc) {
+    $UnitExe = Join-Path $BuildDir "contra3_unit_test.exe"
+    Write-Host "[LD] build/contra3_unit_test.exe"
+    & $Gcc -std=c11 -O2 -Wall -Wextra -Werror -I"$RootDir\include" $UnitSrc $LibPath -o $UnitExe
+    if ($LASTEXITCODE -ne 0) { throw "Unit test build failed" }
+    Write-Host "[RUN] contra3_unit_test.exe"
+    & $UnitExe $BuildDir
+    if ($LASTEXITCODE -ne 0) { throw "Unit tests failed" }
 }
 
 $TestSrc = Join-Path $RootDir "tests\smoke_test.c"
