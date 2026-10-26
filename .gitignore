@@ -1,0 +1,18 @@
+# Build outputs
+build/
+build-*/
+*.o
+*.a
+*.exe
+
+# Copyrighted ROM images and runtime artifacts (never commit)
+*.sfc
+*.smc
+*.state
+contra3_shot_*.bmp
+contra3_rec_*.c3m
+contra3_quicksave.state
+
+# Python
+__pycache__/
+*.pyc
