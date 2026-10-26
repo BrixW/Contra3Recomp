@@ -83,7 +83,7 @@ def main():
         return lag_report(args)
 
     ref = load(args.reference, drop_lag=not args.keep_lag)
-    ours = load(args.recomp, drop_lag=False)
+    ours = load(args.recomp, drop_lag=not args.keep_lag)  # recomp lag = video frames without a logic frame
     fields = [f.strip() for f in args.fields.split(",") if f.strip()]
     for f in fields:
         if ref and f not in ref[0]:

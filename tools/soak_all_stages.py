@@ -138,7 +138,7 @@ def run(stage, players, frames, seed, out_dir):
     trace = os.path.join(out_dir, tag + ".csv")
     shot = os.path.join(out_dir, tag + "_last.bmp")
     make_movie(movie, stage, players, frames, seed)
-    cmd = [EXE, "--headless", "0", "--movie", movie, "--poke", f"{WARP_FRAME}:0086={stage:x}",
+    cmd = [EXE, "--headless", "0", "--movie", movie, "--movie-logic", "--poke", f"{WARP_FRAME}:0086={stage:x}",
            "--infinite-lives", "--strict", "--verify", "--trace", trace, "--dump", f"{frames}:{shot}"]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     out = proc.stdout

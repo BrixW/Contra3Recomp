@@ -31,7 +31,8 @@ typedef enum SnesSavestateResult {
     SNES_SAVESTATE_LAYOUT_MISMATCH,  /* struct sizes / field layout changed since it was written */
     SNES_SAVESTATE_ROM_MISMATCH,     /* written for a different ROM image */
     SNES_SAVESTATE_CORRUPT,          /* payload truncated or checksum mismatch */
-    SNES_SAVESTATE_NO_MEMORY
+    SNES_SAVESTATE_NO_MEMORY,
+    SNES_SAVESTATE_BUSY              /* the 65816 main thread is mid-job (loading); try again in a moment */
 } SnesSavestateResult;
 
 SnesSavestateResult snes_savestate_save(const char *path, const SnesCpuContext *ctx, const SnesApu *apu);

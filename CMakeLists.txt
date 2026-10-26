@@ -18,6 +18,7 @@ add_library(contra3_recomp STATIC
     src/snes_movie.c
     src/snes_savestate.c
     src/snes_rom.c
+    src/snes_mainthread.c
     src/contra3_extras.c
     src/bank_00.c
     src/bank_01.c

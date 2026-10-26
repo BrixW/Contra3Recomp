@@ -26,6 +26,7 @@ $Sources = @(
     "snes_movie",
     "snes_savestate",
     "snes_rom",
+    "snes_mainthread",
     "contra3_extras",
     "bank_00",
     "bank_01",

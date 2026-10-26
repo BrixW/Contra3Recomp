@@ -162,7 +162,19 @@ All settings live in `contra3.ini` next to `contra3.exe`. It's created with the 
   --dump "1350:stage1.bmp" `
   --wav "contra3_stage1.wav"
 ```
-Run `contra3.exe --help` for the full list. Additional harness options: `--press2` (Player 2 script), `--poke <frame>:<addr>=<hex16>` (WRAM write, e.g. stage warp `--poke 800:0086=5`), `--infinite-lives`, `--lag-model [cycles]` (authentic slowdown), `--strict` (abort with a register dump on the first unresolved indirect jump), `--record <file.c3m>`, `--trace <file.csv>`, `--verify` (state/stage progress log + hang detector, `--hang-frames`), and `--movie` / `--movie-offset` / `--lag-from` (see below). Exit status: `0` clean, `2` unresolved indirect jump, `3` `--strict` abort, `4` hang. Every unresolved jump is also logged immediately to stderr and `contra3_fallback.log` with its frame number and dispatch site.
+Run `contra3.exe --help` for the full list. Additional harness options: `--press2` (Player 2 script), `--poke <frame>:<addr>=<hex16>` (WRAM write, e.g. stage warp `--poke 800:0086=5`), `--infinite-lives`, `--lag-model [cycles]` (authentic slowdown), `--strict` (abort with a register dump on the first unresolved indirect jump), `--record <file.c3m>`, `--trace <file.csv>`, `--verify` (state/stage progress log + hang detector, `--hang-frames`), and `--movie` / `--movie-logic` / `--movie-offset` / `--lag-from` (see below), and `--cpu-budget <cycles>` (timing-only CPU cycles per frame, default 45000). Exit status: `0` clean, `2` unresolved indirect jump, `3` `--strict` abort, `4` hang. Every unresolved jump is also logged immediately to stderr and `contra3_fallback.log` with its frame number and dispatch site.
+
+### Bit-Exact Equivalence Against a Reference Emulator (`tools/refemu/`)
+`tools/refemu/refemu_trace.c` drives any libretro SNES core headlessly (built here from upstream snes9x). It feeds the same input movie, applies the same pokes and infinite-lives rule, and writes the same trace CSV as `contra3.exe`. `tools/refemu/compare_all.py` runs the full suite: stages 1–6 in 1P and 2P plus the attract demo.
+```powershell
+# One-time: build the reference core (outside the project) and the harness
+git clone --depth 1 https://github.com/libretro/snes9x ..\refemu\snes9x
+mingw32-make -C ..\refemu\snes9x\libretro platform=win CC=gcc CXX=g++
+gcc -std=c11 -O2 -Iinclude -I..\refemu\snes9x\libretro tools\refemu\refemu_trace.c build\libcontra3_recomp.a -o build\refemu_trace.exe
+
+python tools\refemu\compare_all.py --core ..\refemu\snes9x\libretro\snes9x_libretro.dll
+```
+**Result: 13/13 scenarios are bit-exact.** That's 156,000 logic frames compared over 13 probes every frame: game state and sub-state, stage, both players' positions and lives, the camera, and the RNG. Both sides consume the movie per *logic* frame (`--movie-logic`), so emulator lag frames can't shift the input.
 
 ### Input Movies & Emulator Co-Simulation
 ```powershell
@@ -200,7 +212,7 @@ The recompilation without `--lag-model` services every NMI, so it never lags. Re
    - Software Mode 7 affine transform, 13-bit clip, `EXTBG`, and mid-frame `V-IRQ` `$00:8BE2` 1P/2P splits (`src/snes_ppu.c`).
    - OpenGL 3.3 Core presenter with Sharp-Bilinear / Nearest / CRT shaders, integer scaling and VSync (`src/win32_gl.c`); verified on an NVIDIA RTX 5070 Ti (driver 617.14), with the Nearest 3x readback matching the CPU frame buffer exactly.
    - 2-player split screen checked on Stages 2 and 5: each half uses its own Mode 7 matrix, with the HUD band between them. A half that goes black is the game's own HDMA `INIDISP = $00` fade for a player who is dead or out of lives. It lines up exactly with that player's lives counter, so it is not a renderer fault.
-4. **Step 4: Input Movie Co-Simulation Verification (`Harness complete; reference-emulator comparison pending`)**:
+4. **Step 4: Input Movie Co-Simulation Verification (`Complete`)**:
    - **Done**: `.smv` / `.bk2` / `Input Log.txt` / `.c3m` playback (`--movie`), recording (`--record`, `F6`), per-frame WRAM traces (`--trace`), progress/hang verification (`--verify`), the emulator lag-frame skip (`--lag-from`), the BizHawk/Snes9x trace exporter and the trace comparator. Record -> replay is deterministic: the traces match on every frame.
    - **Done**: All-stage soak across Stages 1-6, 1P and 2P, including stage clears (`tools/soak_all_stages.py`): `0` unresolved jumps, `0` hangs.
-   - **Pending**: No reference emulator or TAS movie is in this workspace, so bit-exact equivalence against real-hardware timing has not been measured yet. Run the two-step co-simulation above once BizHawk / Snes9x-rr and a power-on movie are available.
+   - **Done**: Bit-exact against snes9x in all 13 suite scenarios (`tools/refemu/compare_all.py`). Getting there needed the preemptible main thread (background SPC700 uploads now span frames while NMIs keep running, as on hardware) and calibrating the CPU budget to 45,000 cycles per frame. Before those two changes, Stage 6 2P diverged when a mid-stage upload released the camera lock about 125 frames too early.

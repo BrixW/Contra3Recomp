@@ -44,6 +44,7 @@
 #include "snes_apu.h"
 #include "snes_movie.h"
 #include "snes_savestate.h"
+#include "snes_mainthread.h"
 #include "snes_rom.h"
 #include "contra3_extras.h"
 #include "win32_gl.h"
@@ -387,13 +388,12 @@ static void present_framebuffer(HWND hwnd, HDC hdc) {
 
 static void soft_reset(SnesCpuContext *ctx, SnesApu *apu) {
     snes_apu_clear_samples(apu);
-    ctx->main_loop_iters = 0u;
-    ctx->max_main_loop_iters = 1u;
-    bank00_func_80a3(ctx);
+    snes_soft_reset(ctx);
 }
 
 static bool     g_strict_fallback = false;
 static uint32_t g_lag_budget      = 0u;   /* CPU cycles per frame for the lag model (0 = off) */
+static uint32_t g_cpu_budget      = 0u;   /* timing-only CPU cycles per frame override (0 = default) */
 static Contra3Extras g_extras = { 0u, 0u, false, -1, 0u }; /* restored Contra Spirits features + host extras */
 
 /* Interactive key rebinding (F2 = Player 1, Shift+F2 = Player 2) */
@@ -517,8 +517,8 @@ static void power_on(SnesCpuContext *ctx, SnesApu *apu, const uint8_t *rom, size
     ctx->on_interp_fallback = on_unresolved_jump;
     ctx->strict_fallback = g_strict_fallback;
     ctx->lag_budget = g_lag_budget;
-    ctx->max_main_loop_iters = 1u;
-    bank00_func_8000(ctx);
+    ctx->cpu_budget = g_cpu_budget;
+    snes_power_on(ctx);
 }
 
 static void toggle_recording(HWND hwnd) {
@@ -695,6 +695,7 @@ typedef struct HeadlessOptions {
     const char        *record_path;
     bool               verify;
     bool               infinite_lives;   /* Soak testing: keep both players' lives topped up */
+    bool               movie_logic;      /* advance the movie (and key pokes) on logic frames only */
     unsigned           hang_frames;
 } HeadlessOptions;
 
@@ -862,8 +863,10 @@ static int run_headless(const uint8_t *rom, size_t rom_size, const HeadlessOptio
     const SnesMovie *mv = opt->movie;
     unsigned total_frames = opt->total_frames;
     if (total_frames == 0u && mv != NULL) {
+        /* Run until the movie is consumed; logic-frame playback needs extra video frames for
+           boot, loads and lag, so allow up to 4x the movie length */
         int64_t n = (int64_t)mv->frame_count - (int64_t)opt->movie_offset;
-        total_frames = (n > 0) ? (unsigned)n : 0u;
+        total_frames = (n > 0) ? (unsigned)n * (opt->movie_logic ? 4u : 1u) : 0u;
     }
 
     /* Lossless capture: long loads can produce seconds of audio inside a single frame */
@@ -910,6 +913,7 @@ static int run_headless(const uint8_t *rom, size_t rom_size, const HeadlessOptio
     QueryPerformanceCounter(&t0);
 
     uint16_t prev_lives[2] = { 0u, 0u };
+    unsigned logic_done = 0u;
     unsigned f = 1u;
     for (; f <= total_frames; ++f) {
         uint16_t pad1 = 0u, pad2 = 0u;
@@ -969,7 +973,7 @@ static int run_headless(const uint8_t *rom, size_t rom_size, const HeadlessOptio
             }
         }
         for (unsigned k = 0u; k < opt->num_pokes; ++k) {
-            if (opt->pokes[k].frame == f) {
+            if (opt->pokes[k].frame == (opt->movie_logic ? logic_done + 1u : f)) {
                 snes_bus_write16(&g_ctx, opt->pokes[k].addr, opt->pokes[k].value);
             }
         }
@@ -983,7 +987,17 @@ static int run_headless(const uint8_t *rom, size_t rom_size, const HeadlessOptio
         }
 
         g_frame_number++;
+        uint16_t ctr_before = snes_bus_read16(&g_ctx, PROBE_FRAME_CTR);
         snes_step_frame(&g_ctx, pad1, pad2, need_render ? g_framebuf : NULL);
+        /* A logic frame ran iff NMI_Handler reached MainModule_Dispatch, which increments $3A
+           (or, in a few init frames, resets it with STZ $3A at $00:ADBF); NMIs are atomic here */
+        bool logic_ran = snes_bus_read16(&g_ctx, PROBE_FRAME_CTR) != ctr_before;
+        if (logic_ran) {
+            logic_done++;
+        } else if (opt->movie_logic && this_movie_frame >= 0) {
+            movie_pos--;          /* the game did not read this input: offer it again next frame */
+            this_movie_frame = -1;
+        }
         contra3_extras_apply(&g_ctx, &g_extras);
         snes_movie_record_frame(&rec, pad1, pad2, flags);
 
@@ -1014,7 +1028,7 @@ static int run_headless(const uint8_t *rom, size_t rom_size, const HeadlessOptio
                 fprintf(trace, "%u,%lld,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
                         f, (long long)this_movie_frame, pad1, pad2, s.state, s.sub, s.nmi_mode, s.stage,
                         s.frame_ctr, s.p1_x, s.p1_y, s.p2_x, s.p2_y, s.lives1, s.lives2, s.cam_x,
-                        s.rng_lo, s.rng_hi, g_ctx.last_frame_lagged ? 1u : 0u, (unsigned)g_ctx.last_nmi_cycles, (unsigned)g_ctx.last_nmi_apu_polls);
+                        s.rng_lo, s.rng_hi, logic_ran ? 0u : 1u, (unsigned)g_ctx.last_nmi_cycles, (unsigned)g_ctx.last_nmi_apu_polls);
             }
             if (opt->verify) {
                 if (s.state < 32u) {
@@ -1256,6 +1270,7 @@ static void print_usage(void) {
         "  --filter <sharp|nearest|crt>  OpenGL filter (F9 cycles at runtime)\n"
         "  --integer                 Integer scaling (F10 toggles at runtime)\n"
         "  --movie <file>            Play a .smv / .bk2 / Input Log.txt / .c3m movie from power-on\n"
+        "  --movie-logic             Advance the movie and --poke frames on logic frames only (tools/refemu equivalence runs)\n"
         "  --movie-offset <n>        Skip n leading movie frames (negative: insert n idle frames)\n"
         "  --lag-from <file>         Emulator lag flags (trace CSV 'lag' column or frame list) to skip\n"
         "  --record <file.c3m>       Record the input actually fed to the game (headless)\n"
@@ -1334,6 +1349,10 @@ int main(int argc, char **argv) {
             }
         } else if (strcmp(argv[i], "--movie") == 0 && i + 1 < argc) {
             movie_path = argv[++i];
+        } else if (strcmp(argv[i], "--cpu-budget") == 0 && i + 1 < argc) {
+            g_cpu_budget = (uint32_t)strtoul(argv[++i], NULL, 10);
+        } else if (strcmp(argv[i], "--movie-logic") == 0) {
+            opt.movie_logic = true;
         } else if (strcmp(argv[i], "--movie-offset") == 0 && i + 1 < argc) {
             opt.movie_offset = (int)strtol(argv[++i], NULL, 10);
         } else if (strcmp(argv[i], "--lag-from") == 0 && i + 1 < argc) {

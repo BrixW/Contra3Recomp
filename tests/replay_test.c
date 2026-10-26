@@ -21,6 +21,7 @@
 #include "snes_apu.h"
 #include "snes_movie.h"
 #include "snes_rom.h"
+#include "snes_mainthread.h"
 
 #define CHECKPOINT_INTERVAL 300u
 #define MAX_POKES           8u
@@ -38,6 +39,7 @@ typedef struct Scenario {
     uint16_t poke_val[MAX_POKES];
     bool     infinite_lives;
     bool     lag_model;
+    bool     movie_logic;   /* movie rows and pokes advance on logic frames only (like --movie-logic) */
 } Scenario;
 
 static SnesCpuContext g_ctx;
@@ -72,7 +74,9 @@ static bool parse_scenario(const char *line, Scenario *sc) {
     }
     for (char *tok = strtok(rest, " \t\r"); tok != NULL; tok = strtok(NULL, " \t\r")) {
         unsigned f = 0u, a = 0u, v = 0u;
-        if (strcmp(tok, "lag-model") == 0) {
+        if (strcmp(tok, "movie-logic") == 0) {
+            sc->movie_logic = true;
+        } else if (strcmp(tok, "lag-model") == 0) {
             sc->lag_model = true;
         } else if (strcmp(tok, "infinite-lives") == 0) {
             sc->infinite_lives = true;
@@ -116,13 +120,14 @@ static int run_scenario(const Scenario *sc, const char *golden_dir, const uint8_
     snes_apu_attach(&g_ctx, &g_apu);
     g_ctx.max_main_loop_iters = 1u;
     g_ctx.lag_budget = sc->lag_model ? SNES_LAG_BUDGET_DEFAULT : 0u;
-    bank00_func_8000(&g_ctx);
+    snes_power_on(&g_ctx);
 
     uint16_t prev_lives[2] = { 0u, 0u };
     int rc = 0;
     unsigned checkpoints = 0u;
+    uint32_t logic = 0u;
     for (unsigned f = 1u; f <= sc->frames && rc == 0; ++f) {
-        uint32_t mf = f - 1u;
+        uint32_t mf = sc->movie_logic ? logic : f - 1u;
         uint16_t pad1 = snes_movie_pad(&movie, mf, 0u);
         uint16_t pad2 = snes_movie_pad(&movie, mf, 1u);
         uint8_t flags = snes_movie_flags(&movie, mf);
@@ -132,12 +137,10 @@ static int run_scenario(const Scenario *sc, const char *golden_dir, const uint8_
             snes_apu_attach(&g_ctx, &g_apu);
             g_ctx.max_main_loop_iters = 1u;
             g_ctx.lag_budget = sc->lag_model ? SNES_LAG_BUDGET_DEFAULT : 0u;
-    bank00_func_8000(&g_ctx);
+            snes_power_on(&g_ctx);
         } else if ((flags & SNES_MOVIE_FLAG_RESET) != 0u) {
             snes_apu_clear_samples(&g_apu);
-            g_ctx.main_loop_iters = 0u;
-            g_ctx.max_main_loop_iters = 1u;
-            bank00_func_80a3(&g_ctx);
+            snes_soft_reset(&g_ctx);
         }
         if (sc->infinite_lives) {
             static const uint32_t lives_addr[2] = { 0x001F8Au, 0x001FCAu };
@@ -151,13 +154,17 @@ static int run_scenario(const Scenario *sc, const char *golden_dir, const uint8_
             }
         }
         for (unsigned k = 0u; k < sc->num_pokes; ++k) {
-            if (sc->poke_frame[k] == f) {
+            if (sc->poke_frame[k] == (sc->movie_logic ? logic + 1u : f)) {
                 snes_bus_write16(&g_ctx, sc->poke_addr[k], sc->poke_val[k]);
             }
         }
 
         bool checkpoint = (f % CHECKPOINT_INTERVAL) == 0u || f == sc->frames;
+        uint16_t ctr_before = snes_bus_read16(&g_ctx, 0x00003Au);
         snes_step_frame(&g_ctx, pad1, pad2, checkpoint ? g_frame : NULL);
+        if (snes_bus_read16(&g_ctx, 0x00003Au) != ctr_before) {
+            logic++;   /* a logic frame ran and consumed this movie row */
+        }
         snes_apu_clear_samples(&g_apu);
         if (!checkpoint) {
             continue;

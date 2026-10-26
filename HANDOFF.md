@@ -12,7 +12,7 @@
 | **Step 1: Interactive Desktop Window & S-PPU Renderer** | **Complete** | Full scanline software PPU (`src/snes_ppu.c`) + Win32 frontend (`src/win32_main.c`) supporting Modes 0–7, 128 sprites, HDMA (`$420C`), dual windows, color math, and Mode 7 V-IRQ splits |
 | **Step 2: S-SMP (SPC700 + IPL) & S-DSP Audio Core** | **Complete** | 8-voice `32 kHz` stereo synthesis (`src/snes_apu.c`) + `48 kHz` Catmull-Rom cubic upsampled `waveOut` live streaming |
 | **Step 3: Mode 7 Overhead Polish & Hardware GPU Presentation** | **Complete** | OpenGL 3.3 Core presenter with Sharp-Bilinear / Nearest / CRT shaders, integer scaling and VSync (`src/win32_gl.c`); 2P split-screen behaviour on Stages 2 & 5 verified |
-| **Step 4: Input Movie Co-Simulation Verification** | **Harness complete, reference comparison pending** | `.smv` / `.bk2` / `Input Log.txt` / `.c3m` playback and recording, per-frame traces, lag-frame alignment, emulator trace exporter + comparator, all-stage soak. Bit-exact comparison against a reference emulator still needs BizHawk / Snes9x-rr and a power-on movie, neither of which is in this workspace |
+| **Step 4: Input Movie Co-Simulation Verification** | **Complete** | Bit-exact against snes9x (libretro, built from upstream) in all 13 scenarios of `tools/refemu/compare_all.py`: stages 1–6 in 1P and 2P plus the attract demo, 156,000 logic frames over 13 probes. Movie playback/recording, traces, lag alignment, soak and golden tests remain as the day-to-day safety net |
 
 ---
 
@@ -51,14 +51,11 @@ Verified end-to-end with zero compiler warnings (`gcc -std=c11 -O2 -Wall -Wextra
 
 ## 4. Remaining Work
 
-### A. Bit-exact equivalence against a reference emulator (completes Step 4)
-1. Install BizHawk 2.x (bsnes core) or Snes9x-rr and get a **power-on** Contra III (USA) movie, e.g. a TASVideos `.bk2` / `.smv` publication.
-2. Play it with `tools/emu_trace.lua` loaded to produce `emu_trace.csv`.
-3. `contra3.exe --headless 0 --movie run.bk2 --lag-from emu_trace.csv --verify --trace ours.csv`
-4. `python tools/compare_trace.py emu_trace.csv ours.csv`. The first divergence points straight at the frame (and probe) where recompiled logic or timing departs from hardware. Expect boot-time differences around the SPC700 upload handshake first; `--movie-offset` and `--offset` are there to absorb a constant shift.
+### A. Bit-exact equivalence (done)
+`python tools/refemu/compare_all.py --core <snes9x_libretro.dll>` reports 13/13 scenarios bit-exact. Re-run it after any generator or runtime change that could affect timing. For a second opinion, build a bsnes libretro core and point `--core` at it.
 
-### A2. Calibrate the lag model (needs the same emulator trace)
-`--lag-model` already reproduces Konami's NMI busy-guard slowdown from per-instruction 65C816 cycle costs, but the 45,642-cycle budget is an estimate. Run the movie with `--lag-model` (no `--lag-from`) and use `python tools/compare_trace.py emu_trace.csv ours.csv --lag-report` to tune it. A tighter budget is very sensitive: 40,000 cycles roughly doubles the lag frames on Stage 4 2P. Once recall and precision are high, `--lag-model` can become the default and `--lag-from` unnecessary.
+### A2. Calibrate the lag model
+The CPU budget is calibrated (45,000; see `ARCHITECTURE.md` §7.7), but `--lag-model` lag frames haven't been compared yet. Run the movie with `--lag-model` and without `--movie-logic`, then use `compare_trace.py --lag-report` against a per-video-frame reference trace. The harness currently aligns per logic frame, so it would need a `--video-frames` mode for this.
 
 ### A3. CPU/APU synchronisation (done)
 The SPC700 now runs on the CPU's timeline (`snes_apu_sync` before every `$2140–$2143` access, plus every frame boundary), so upload handshakes and loads take real time. The emulator comparison in §A/§A2 is also the way to validate load durations: Stage 1 intro card about 4 s, power-on about 2 s with `--lag-model`.

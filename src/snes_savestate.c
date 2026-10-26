@@ -3,6 +3,7 @@
  */
 
 #include "snes_savestate.h"
+#include "snes_mainthread.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,6 +53,10 @@ static uint32_t get32(const uint8_t *p) {
 }
 
 SnesSavestateResult snes_savestate_save(const char *path, const SnesCpuContext *ctx, const SnesApu *apu) {
+    /* A coroutine stack cannot be serialised: only save while the main thread sits in its idle loop */
+    if (!snes_mainthread_idle(ctx)) {
+        return SNES_SAVESTATE_BUSY;
+    }
     uint32_t payload = fnv1a32(2166136261u, ctx, sizeof(*ctx));
     payload = fnv1a32(payload, apu, sizeof(*apu));
 
@@ -142,6 +147,7 @@ SnesSavestateResult snes_savestate_load(const char *path, SnesCpuContext *ctx, S
     new_ctx->on_interp_fallback = ctx->on_interp_fallback;
     new_ctx->strict_fallback    = ctx->strict_fallback;
     new_ctx->apu_core           = ctx->apu_core;
+    new_ctx->main_thread        = ctx->main_thread;
     new_apu->pcm_sink      = apu->pcm_sink;
     new_apu->pcm_sink_user = apu->pcm_sink_user;
     memcpy(ctx, new_ctx, sizeof(*ctx));
@@ -149,6 +155,9 @@ SnesSavestateResult snes_savestate_load(const char *path, SnesCpuContext *ctx, S
     snes_apu_clear_samples(apu);
     free(new_ctx);
     free(new_apu);
+    if (snes_mainthread_active(ctx)) {
+        snes_mainthread_restart_idle(ctx); /* saved states always have the main thread idle */
+    }
     return SNES_SAVESTATE_OK;
 }
 
@@ -162,6 +171,7 @@ const char *snes_savestate_result_str(SnesSavestateResult r) {
         case SNES_SAVESTATE_ROM_MISMATCH:     return "save state belongs to a different ROM";
         case SNES_SAVESTATE_CORRUPT:          return "save state is truncated or corrupt";
         case SNES_SAVESTATE_NO_MEMORY:        return "out of memory";
+        case SNES_SAVESTATE_BUSY:             return "the game is loading - try again in a moment";
         default:                              return "unknown error";
     }
 }

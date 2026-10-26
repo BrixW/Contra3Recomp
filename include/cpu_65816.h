@@ -74,6 +74,7 @@ typedef struct SnesCpuContext {
     uint32_t last_nmi_cycles;     /* Cycles consumed by the most recent serviced NMI (game logic frame) */
     uint32_t last_nmi_apu_polls;  /* APU port reads during that NMI (SPC700 upload handshakes) */
     uint32_t lag_budget;          /* CPU cycles per frame; 0 disables the lag model (every NMI serviced) */
+    uint32_t cpu_budget;          /* CPU cycles per frame for timing when the lag model is off (0 = default) */
     uint32_t lag_debt;            /* Diagnostic: how far the CPU ran past this frame's NMI (cycles) */
     uint32_t lag_frames;          /* Frames whose NMI found the game busy ($003C guard) */
     bool     last_frame_lagged;   /* The most recent snes_step_frame was a lag frame */
@@ -90,6 +91,12 @@ typedef struct SnesCpuContext {
     uint32_t spc_frame_cycles;
     uint32_t spc_frame_frac;
     uint32_t cooperative_nmis;    /* VBlank waits serviced from the main thread ($00:85EC) */
+
+    /* Preemptible main thread (src/snes_mainthread.c); NULL = legacy synchronous model */
+    void    *main_thread;         /* host-owned coroutine handle (preserved across save states) */
+    uint64_t yield_at;            /* wall time at which the main thread must yield to the next NMI */
+    uint64_t yield_cycles;        /* the same deadline in ctx->cycles units (checked per instruction) */
+    bool     main_idle;           /* main thread parked in the $00:8166 idle loop (safe to save) */
     struct SnesApu *apu_core;     /* Optional live Sony S-SMP (SPC700) + S-DSP audio core */
 } SnesCpuContext;
 
@@ -97,15 +104,24 @@ typedef struct SnesCpuContext {
  * Cycle accounting emitted by tools/translate_rom.py before every instruction.
  * SNES_DP_PENALTY adds the extra cycle for direct-page addressing when D.low != 0.
  */
-#define SNES_CYCLES(ctx, n)     ((ctx)->cycles += (uint64_t)(n))
+void snes_mainthread_preempt(struct SnesCpuContext *ctx);
+#define SNES_CYCLES(ctx, n)                                                         \
+    do {                                                                            \
+        (ctx)->cycles += (uint64_t)(n);                                             \
+        if ((ctx)->cycles >= (ctx)->yield_cycles) snes_mainthread_preempt(ctx);     \
+    } while (0)
+/* Runtime-side charges (DMA, MVN/MVP) that must not be split by an NMI */
+#define SNES_CYCLES_NOYIELD(ctx, n) ((ctx)->cycles += (uint64_t)(n))
 #define SNES_DP_PENALTY(ctx)    ((((ctx)->dp & 0x00FFu) != 0u) ? 1u : 0u)
 
 /*
- * Default lag budget: one NTSC frame is 357,368 master clocks, minus DRAM refresh
- * (262 lines x 40). Contra III is SlowROM, and a typical instruction cycle mixes
- * 8-clock ROM/WRAM accesses with 6-clock internal cycles, so ~7.6 clocks per CPU cycle.
+ * CPU cycles per NTSC frame. First principles: 357,368 master clocks minus DRAM refresh
+ * (262 lines x 40) at ~7.6 clocks per SlowROM CPU cycle gives ~45,642. Calibrated against
+ * snes9x with tools/refemu/compare_all.py: every scenario is bit-exact for budgets of about
+ * 44,700-45,150 (the Stage 6 2P mid-stage SPC700 upload is the sensitive event), so the
+ * centre of that window is used.
  */
-#define SNES_LAG_BUDGET_DEFAULT 45642u
+#define SNES_LAG_BUDGET_DEFAULT 45000u
 
 /* Lifecycle & Bus Routines (implemented in src/snes_runtime.c) */
 void     snes_context_init(SnesCpuContext *ctx, const uint8_t *rom, size_t rom_size);

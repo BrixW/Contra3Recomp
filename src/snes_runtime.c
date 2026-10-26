@@ -4,6 +4,7 @@
 #include "cpu_65816.h"
 #include "snes_apu.h"
 #include "contra3_recomp.h"
+#include "snes_mainthread.h"
 
 /* Forward declaration of generated global function dispatcher (src/dispatch.c) */
 bool contra3_dispatch_call(SnesCpuContext *ctx, uint32_t addr24);
@@ -31,6 +32,8 @@ static uint16_t snes_vram_translate(uint16_t addr, uint8_t vmain) {
 
 void snes_context_init(SnesCpuContext *ctx, const uint8_t *rom, size_t rom_size) {
     memset(ctx, 0, sizeof(*ctx));
+    ctx->yield_at = UINT64_MAX;
+    ctx->yield_cycles = UINT64_MAX;
     ctx->rom = rom;
     ctx->rom_size = rom_size;
     ctx->sp = 0x01FFu;
@@ -107,7 +110,7 @@ static void snes_execute_mdma(SnesCpuContext *ctx, uint8_t mask) {
             }
         }
         d->das = 0u;
-        SNES_CYCLES(ctx, count + 8u); /* 8 master clocks per byte (~1 SlowROM cycle) + channel setup */
+        SNES_CYCLES_NOYIELD(ctx, count + 8u); /* 8 master clocks per byte (~1 SlowROM cycle) + channel setup */
     }
 }
 
@@ -598,7 +601,7 @@ void snes_bus_write16(SnesCpuContext *ctx, uint32_t addr24, uint16_t val) {
 void snes_block_mvn(SnesCpuContext *ctx, uint8_t dst_bank, uint8_t src_bank) {
     ctx->db = dst_bank;
     uint32_t count = (uint32_t)ctx->a + 1u;
-    SNES_CYCLES(ctx, 7u * count);
+    SNES_CYCLES_NOYIELD(ctx, 7u * count);
     for (uint32_t i = 0u; i < count; ++i) {
         uint8_t b = snes_bus_read8(ctx, ((uint32_t)src_bank << 16) | (uint32_t)ctx->x);
         snes_bus_write8(ctx, ((uint32_t)dst_bank << 16) | (uint32_t)ctx->y, b);
@@ -616,7 +619,7 @@ void snes_block_mvn(SnesCpuContext *ctx, uint8_t dst_bank, uint8_t src_bank) {
 void snes_block_mvp(SnesCpuContext *ctx, uint8_t dst_bank, uint8_t src_bank) {
     ctx->db = dst_bank;
     uint32_t count = (uint32_t)ctx->a + 1u;
-    SNES_CYCLES(ctx, 7u * count);
+    SNES_CYCLES_NOYIELD(ctx, 7u * count);
     for (uint32_t i = 0u; i < count; ++i) {
         uint8_t b = snes_bus_read8(ctx, ((uint32_t)src_bank << 16) | (uint32_t)ctx->x);
         snes_bus_write8(ctx, ((uint32_t)dst_bank << 16) | (uint32_t)ctx->y, b);
@@ -690,7 +693,10 @@ static uint32_t spc_cycles_for_next_frame(SnesCpuContext *ctx) {
 }
 
 uint32_t snes_timing_budget(const SnesCpuContext *ctx) {
-    return (ctx->lag_budget != 0u) ? ctx->lag_budget : SNES_LAG_BUDGET_DEFAULT;
+    if (ctx->lag_budget != 0u) {
+        return ctx->lag_budget;
+    }
+    return (ctx->cpu_budget != 0u) ? ctx->cpu_budget : SNES_LAG_BUDGET_DEFAULT;
 }
 
 uint64_t snes_wall_cycles(const SnesCpuContext *ctx) {
@@ -724,7 +730,18 @@ void snes_timeline_next_frame(SnesCpuContext *ctx) {
 }
 
 void snes_cooperative_nmi(SnesCpuContext *ctx) {
-    /* The main thread spins until the next grid NMI: that time passes for the APU too */
+    if (snes_mainthread_running(ctx)) {
+        /* Preemptible model: spin (idle) until the next NMI and let the host service it; the NMI
+           sees $003C != 0 and takes Konami's busy path, which releases this wait */
+        uint64_t now = snes_wall_cycles(ctx);
+        if (now < ctx->yield_at) {
+            ctx->idle_cycles += ctx->yield_at - now;
+        }
+        ctx->cooperative_nmis++;
+        snes_mainthread_yield(ctx);
+        return;
+    }
+    /* Legacy model: the main thread spins until the next grid NMI: that time passes for the APU too */
     uint64_t wall = snes_wall_cycles(ctx);
     if (wall < ctx->nmi_wall) {
         ctx->idle_cycles += ctx->nmi_wall - wall;

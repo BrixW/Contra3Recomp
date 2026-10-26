@@ -14,6 +14,7 @@
 #include <string.h>
 #include "snes_ppu.h"
 #include "snes_apu.h"
+#include "snes_mainthread.h"
 
 /* Layer IDs matching CGADSUB ($2131) bit positions: 0..3 = BG1..BG4, 4 = OBJ, 5 = BACKDROP */
 #define LAYER_BG1       0u
@@ -817,18 +818,22 @@ void snes_step_frame(SnesCpuContext *ctx, uint16_t pad1, uint16_t pad2, uint32_t
     }
     g_active_render_buf = NULL;
 
-    /* Run background decompression / SPC700 streaming worker slices between VBlanks
-       (the CPU has no spare time for it while a lag frame is still running game logic) */
-    for (unsigned slice = 0u; slice < (lagged ? 0u : 8u); ++slice) {
-        bank00_func_995a(ctx);
-        /* Also advance non-NMI background tile/LZSS streams if active ($1300/$1340) */
-        if (snes_bus_read16(ctx, 0x000052u) != 0x00FFu) {
-            break;
-        }
-    }
-
     /* Next NMI; the SPC700 runs on to it (or to "now" if the CPU has already passed it) */
     snes_timeline_next_frame(ctx);
+
+    if (snes_mainthread_active(ctx)) {
+        /* The main thread (background loop / boot code) owns the CPU until the next NMI */
+        snes_mainthread_run_until(ctx, ctx->nmi_wall);
+    } else {
+        /* Legacy model: run background decompression / SPC700 streaming worker slices
+           (none while a lag frame is still running game logic) */
+        for (unsigned slice = 0u; slice < (lagged ? 0u : 8u); ++slice) {
+            bank00_func_995a(ctx);
+            if (snes_bus_read16(ctx, 0x000052u) != 0x00FFu) {
+                break;
+            }
+        }
+    }
     if (ctx->apu_core != NULL) {
         uint64_t target = snes_spc_time_now(ctx);
         snes_apu_run_to(ctx->apu_core, (target > ctx->spc_at_nmi) ? target : ctx->spc_at_nmi);
