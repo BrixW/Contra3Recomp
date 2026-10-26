@@ -139,7 +139,7 @@ def run(stage, players, frames, seed, out_dir):
     shot = os.path.join(out_dir, tag + "_last.bmp")
     make_movie(movie, stage, players, frames, seed)
     cmd = [EXE, "--headless", "0", "--movie", movie, "--poke", f"{WARP_FRAME}:0086={stage:x}",
-           "--infinite-lives", "--verify", "--trace", trace, "--dump", f"{frames}:{shot}"]
+           "--infinite-lives", "--strict", "--verify", "--trace", trace, "--dump", f"{frames}:{shot}"]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     out = proc.stdout
 
@@ -165,7 +165,8 @@ def run(stage, players, frames, seed, out_dir):
         "stages": sorted(stages_seen), "clears": clears, "max_cam": max_cam,
         "states": "".join(f"{s:X}" for s in sorted(states)),
         "fps": float(fps.group(1)) if fps else 0.0,
-        "detail": [l for l in out.splitlines() if l.startswith(("[HANG]", "[HEADLESS] last"))],
+        "detail": [l for l in (out + proc.stderr).splitlines()
+                   if l.startswith(("[HANG]", "[HEADLESS] last", "[STRICT]", "[FALLBACK]"))],
     }
 
 

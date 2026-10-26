@@ -74,7 +74,7 @@ void bank03_func_e197(SnesCpuContext *ctx) {
             case 0xE3E5u: bank03_func_e3e5(ctx); return;
             default:
                 // REQUIRES INTERPRETER FALLBACK
-                snes_interp_fallback(ctx, ((uint32_t)ctx->pb << 16) | (uint32_t)jmp_tgt);
+                snes_interp_fallback_at(ctx, 0x03E19Au, ((uint32_t)ctx->pb << 16) | (uint32_t)jmp_tgt);
                 return;
         }
     }

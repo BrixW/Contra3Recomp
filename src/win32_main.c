@@ -455,10 +455,37 @@ static void soft_reset(SnesCpuContext *ctx, SnesApu *apu) {
     bank00_func_80a3(ctx);
 }
 
+static bool     g_strict_fallback = false;
+static uint32_t g_frame_number    = 0u;   /* Frames stepped since launch (for diagnostics) */
+
+/* Report every unresolved indirect target immediately, with the dispatch site and frame */
+static void on_unresolved_jump(SnesCpuContext *ctx, uint32_t target_addr24) {
+    static unsigned reported = 0u;
+    if (reported >= 32u) {
+        return;
+    }
+    reported++;
+    uint32_t site = ctx->last_unresolved_site;
+    char msg[160];
+    snprintf(msg, sizeof(msg), "[FALLBACK] frame %u: unresolved target $%06X from site $%02X:%04X (state=$%02X stage=%u)%s\n",
+             (unsigned)g_frame_number, (unsigned)target_addr24,
+             (unsigned)((site >> 16) & 0xFFu), (unsigned)(site & 0xFFFFu),
+             snes_bus_read8(ctx, 0x000032u), snes_bus_read16(ctx, 0x000086u),
+             (reported == 32u) ? " (further reports suppressed)" : "");
+    fputs(msg, stderr);
+    FILE *log = fopen("contra3_fallback.log", "a");
+    if (log != NULL) {
+        fputs(msg, log);
+        fclose(log);
+    }
+}
+
 static void power_on(SnesCpuContext *ctx, SnesApu *apu, const uint8_t *rom, size_t rom_size) {
     snes_context_init(ctx, rom, rom_size);
     snes_apu_init(apu);
     snes_apu_attach(ctx, apu);
+    ctx->on_interp_fallback = on_unresolved_jump;
+    ctx->strict_fallback = g_strict_fallback;
     ctx->max_main_loop_iters = 1u;
     bank00_func_8000(ctx);
 }
@@ -858,6 +885,7 @@ static int run_headless(const uint8_t *rom, size_t rom_size, const HeadlessOptio
             }
         }
 
+        g_frame_number++;
         snes_step_frame(&g_ctx, pad1, pad2, need_render ? g_framebuf : NULL);
         snes_movie_record_frame(&rec, pad1, pad2, flags);
 
@@ -989,7 +1017,7 @@ static int run_headless(const uint8_t *rom, size_t rom_size, const HeadlessOptio
         printf("[HEADLESS] last unresolved target: $%06X\n", (unsigned)g_ctx.last_unresolved_addr);
         return 2;
     }
-    return hang ? 3 : 0;
+    return hang ? 4 : 0; /* 3 is reserved: abort() from --strict exits with 3 on Windows */
 }
 
 /*
@@ -1115,6 +1143,7 @@ static void print_usage(void) {
         "  --trace <file.csv>        Per-frame WRAM probe trace (compare with tools/compare_trace.py)\n"
         "  --verify                  Print state/stage progress, detect hangs, summarize the run\n"
         "  --hang-frames <n>         Frames without a logic-frame tick that count as a hang (default 600)\n"
+        "  --strict                  Abort with a register dump on the first unresolved indirect jump\n"
         "  --infinite-lives          Refill a player's lives when they reach the last one (soak testing)\n"
         "  --gl-selftest <prefix>    Render a Stage 1 frame through every OpenGL filter and verify readback\n");
 }
@@ -1184,6 +1213,8 @@ int main(int argc, char **argv) {
             opt.trace_path = argv[++i];
         } else if (strcmp(argv[i], "--verify") == 0) {
             opt.verify = true;
+        } else if (strcmp(argv[i], "--strict") == 0) {
+            g_strict_fallback = true;
         } else if (strcmp(argv[i], "--infinite-lives") == 0) {
             opt.infinite_lives = true;
         } else if (strcmp(argv[i], "--hang-frames") == 0 && i + 1 < argc) {
@@ -1357,6 +1388,7 @@ int main(int argc, char **argv) {
                 pad1 = (uint16_t)(poll_keyboard_pad1(hwnd) | poll_xinput_pad(0u));
                 pad2 = poll_xinput_pad(1u);
             }
+            g_frame_number++;
             snes_step_frame(&g_ctx, pad1, pad2, g_framebuf);
             snes_movie_record_frame(&g_recorder, pad1, pad2, flags);
             win32_audio_pump(turbo, false);

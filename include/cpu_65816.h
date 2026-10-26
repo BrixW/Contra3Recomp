@@ -66,6 +66,8 @@ typedef struct SnesCpuContext {
     uint64_t max_main_loop_iters; /* If > 0, sets stop_main_loop once reached */
     uint32_t unresolved_jumps;    /* Count of fallback invocations */
     uint32_t last_unresolved_addr;/* Most recent unresolved 24-bit target */
+    uint32_t last_unresolved_site;/* 24-bit address of the indirect JMP/JSR/JML that missed */
+    bool     strict_fallback;     /* Abort with a register dump on the first unresolved target */
     struct SnesApu *apu_core;     /* Optional live Sony S-SMP (SPC700) + S-DSP audio core */
 } SnesCpuContext;
 
@@ -77,7 +79,13 @@ uint16_t snes_bus_read16(SnesCpuContext *ctx, uint32_t addr24);
 void     snes_bus_write16(SnesCpuContext *ctx, uint32_t addr24, uint16_t val);
 void     snes_block_mvn(SnesCpuContext *ctx, uint8_t dst_bank, uint8_t src_bank);
 void     snes_block_mvp(SnesCpuContext *ctx, uint8_t dst_bank, uint8_t src_bank);
-void     snes_interp_fallback(SnesCpuContext *ctx, uint32_t target_addr24);
+/*
+ * Called by generated dispatch switches when a runtime target is not a recompiled
+ * entry point. Retries the global dispatcher, then records the miss (count, site,
+ * target), invokes on_interp_fallback, and aborts if strict_fallback is set.
+ */
+void     snes_interp_fallback_at(SnesCpuContext *ctx, uint32_t site_addr24, uint32_t target_addr24);
+void     snes_interp_fallback(SnesCpuContext *ctx, uint32_t target_addr24); /* site unknown */
 
 /* --- Status Register (P) Pack / Unpack --- */
 static inline uint8_t snes_pack_p(const SnesCpuContext *ctx) {

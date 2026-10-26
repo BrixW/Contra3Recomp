@@ -16,3 +16,4 @@ contra3_quicksave.state
 # Python
 __pycache__/
 *.pyc
+contra3_fallback.log

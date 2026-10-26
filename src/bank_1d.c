@@ -1334,7 +1334,7 @@ L_af72: /* [M=16-bit, X=16-bit] */
             case 0xBE2Cu: bank1d_func_be2c(ctx); return;
             default:
                 // REQUIRES INTERPRETER FALLBACK
-                snes_interp_fallback(ctx, ((uint32_t)ctx->pb << 16) | (uint32_t)jmp_tgt);
+                snes_interp_fallback_at(ctx, 0x1DAF7Eu, ((uint32_t)ctx->pb << 16) | (uint32_t)jmp_tgt);
                 return;
         }
     }
@@ -6308,7 +6308,7 @@ L_beee: /* [M=16-bit, X=16-bit] */
             case 0xC14Cu: bank1d_func_c14c(ctx); return;
             default:
                 // REQUIRES INTERPRETER FALLBACK
-                snes_interp_fallback(ctx, ((uint32_t)ctx->pb << 16) | (uint32_t)jmp_tgt);
+                snes_interp_fallback_at(ctx, 0x1DBEFAu, ((uint32_t)ctx->pb << 16) | (uint32_t)jmp_tgt);
                 return;
         }
     }
@@ -6663,7 +6663,7 @@ L_c005: /* [M=16-bit, X=16-bit] */
             case 0xC5FFu: bank1d_func_c5ff(ctx); return;
             default:
                 // REQUIRES INTERPRETER FALLBACK
-                snes_interp_fallback(ctx, ((uint32_t)ctx->pb << 16) | (uint32_t)jmp_tgt);
+                snes_interp_fallback_at(ctx, 0x1DC028u, ((uint32_t)ctx->pb << 16) | (uint32_t)jmp_tgt);
                 return;
         }
     }
@@ -6710,7 +6710,7 @@ void bank1d_func_c03b(SnesCpuContext *ctx) {
             case 0xC51Bu: bank1d_func_c51b(ctx); return;
             default:
                 // REQUIRES INTERPRETER FALLBACK
-                snes_interp_fallback(ctx, ((uint32_t)ctx->pb << 16) | (uint32_t)jmp_tgt);
+                snes_interp_fallback_at(ctx, 0x1DC048u, ((uint32_t)ctx->pb << 16) | (uint32_t)jmp_tgt);
                 return;
         }
     }
@@ -7306,7 +7306,7 @@ void bank1d_func_c23d(SnesCpuContext *ctx) {
             case 0xC2AAu: bank1d_func_c2aa(ctx); return;
             default:
                 // REQUIRES INTERPRETER FALLBACK
-                snes_interp_fallback(ctx, ((uint32_t)ctx->pb << 16) | (uint32_t)jmp_tgt);
+                snes_interp_fallback_at(ctx, 0x1DC24Au, ((uint32_t)ctx->pb << 16) | (uint32_t)jmp_tgt);
                 return;
         }
     }
@@ -7917,7 +7917,7 @@ L_c404: /* [M=16-bit, X=16-bit] */
             case 0xC4F9u: bank1d_func_c4f9(ctx); return;
             default:
                 // REQUIRES INTERPRETER FALLBACK
-                snes_interp_fallback(ctx, ((uint32_t)ctx->pb << 16) | (uint32_t)jmp_tgt);
+                snes_interp_fallback_at(ctx, 0x1DC419u, ((uint32_t)ctx->pb << 16) | (uint32_t)jmp_tgt);
                 return;
         }
     }
@@ -8974,7 +8974,7 @@ L_c6af: /* [M=16-bit, X=16-bit] */
             case 0xC7C2u: bank1d_func_c7c2(ctx); return;
             default:
                 // REQUIRES INTERPRETER FALLBACK
-                snes_interp_fallback(ctx, ((uint32_t)ctx->pb << 16) | (uint32_t)jmp_tgt);
+                snes_interp_fallback_at(ctx, 0x1DC6BBu, ((uint32_t)ctx->pb << 16) | (uint32_t)jmp_tgt);
                 return;
         }
     }

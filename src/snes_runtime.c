@@ -1,3 +1,5 @@
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "cpu_65816.h"
 #include "snes_apu.h"
@@ -622,7 +624,9 @@ void snes_block_mvp(SnesCpuContext *ctx, uint8_t dst_bank, uint8_t src_bank) {
     ctx->a = 0xFFFFu;
 }
 
-void snes_interp_fallback(SnesCpuContext *ctx, uint32_t target_addr24) {
+#define SNES_FALLBACK_SITE_UNKNOWN 0xFFFFFFFFu
+
+void snes_interp_fallback_at(SnesCpuContext *ctx, uint32_t site_addr24, uint32_t target_addr24) {
     /* Normalize LoROM mirror bank ($80-$9F -> $00-$1F) and check null slot ($0000) */
     uint8_t bk = (uint8_t)((target_addr24 >> 16) & 0x1Fu);
     uint16_t pc = (uint16_t)(target_addr24 & 0xFFFFu);
@@ -636,7 +640,26 @@ void snes_interp_fallback(SnesCpuContext *ctx, uint32_t target_addr24) {
     }
     ctx->unresolved_jumps++;
     ctx->last_unresolved_addr = target_addr24;
+    ctx->last_unresolved_site = site_addr24;
     if (ctx->on_interp_fallback != NULL) {
         ctx->on_interp_fallback(ctx, target_addr24);
     }
+    if (ctx->strict_fallback) {
+        /* The skipped code would otherwise silently desynchronize game state */
+        if (site_addr24 == SNES_FALLBACK_SITE_UNKNOWN) {
+            fprintf(stderr, "[STRICT] unresolved indirect target $%06X (site unknown)\n", (unsigned)target_addr24);
+        } else {
+            fprintf(stderr, "[STRICT] unresolved indirect target $%06X from $%02X:%04X\n", (unsigned)target_addr24,
+                    (unsigned)((site_addr24 >> 16) & 0xFFu), (unsigned)(site_addr24 & 0xFFFFu));
+        }
+        fprintf(stderr, "[STRICT] A=%04X X=%04X Y=%04X S=%04X D=%04X DB=%02X PB=%02X M=%u X=%u | state=$%02X stage=%u\n",
+                ctx->a, ctx->x, ctx->y, ctx->sp, ctx->dp, ctx->db, ctx->pb, ctx->flag_m, ctx->flag_x,
+                snes_bus_read8(ctx, 0x000032u), snes_bus_read16(ctx, 0x000086u));
+        fflush(stderr);
+        abort();
+    }
+}
+
+void snes_interp_fallback(SnesCpuContext *ctx, uint32_t target_addr24) {
+    snes_interp_fallback_at(ctx, SNES_FALLBACK_SITE_UNKNOWN, target_addr24);
 }

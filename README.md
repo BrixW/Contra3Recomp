@@ -144,7 +144,7 @@ ctest --test-dir build-cmake --output-on-failure
   --dump "1350:stage1.bmp" `
   --wav "contra3_stage1.wav"
 ```
-Run `contra3.exe --help` for the full list. Additional harness options: `--press2` (Player 2 script), `--poke <frame>:<addr>=<hex16>` (WRAM write, e.g. stage warp `--poke 800:0086=5`), `--infinite-lives`, `--record <file.c3m>`, `--trace <file.csv>`, `--verify` (state/stage progress log + hang detector, `--hang-frames`), and `--movie` / `--movie-offset` / `--lag-from` (see below). Exit status: `0` clean, `2` unresolved indirect jump, `3` hang.
+Run `contra3.exe --help` for the full list. Additional harness options: `--press2` (Player 2 script), `--poke <frame>:<addr>=<hex16>` (WRAM write, e.g. stage warp `--poke 800:0086=5`), `--infinite-lives`, `--strict` (abort with a register dump on the first unresolved indirect jump), `--record <file.c3m>`, `--trace <file.csv>`, `--verify` (state/stage progress log + hang detector, `--hang-frames`), and `--movie` / `--movie-offset` / `--lag-from` (see below). Exit status: `0` clean, `2` unresolved indirect jump, `3` `--strict` abort, `4` hang. Every unresolved jump is also logged immediately to stderr and `contra3_fallback.log` with its frame number and dispatch site.
 
 ### Input Movies & Emulator Co-Simulation
 ```powershell
