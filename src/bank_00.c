@@ -2321,7 +2321,7 @@ L_85df: /* [M=16-bit, X=16-bit] */
     snes_bus_write8(ctx, snes_addr_abs(ctx, 0x003Cu), (uint8_t)((uint8_t)(ctx->a & 0xFFu)));
 L_85ec: /* [M=8-bit, X=16-bit] */
     if ((ctx->wram[0x003Cu] & 0x80u) != 0u) {
-        bank00_func_819b(ctx);
+        snes_cooperative_nmi(ctx);
     }
     /* $00:85EC: AD 3C 00    | LDA $003C          [M=8-bit, X=16-bit] */
     SNES_CYCLES(ctx, 4u);

@@ -760,12 +760,35 @@ static uint8_t ppu_frame_read_cpu_io_hook(SnesCpuContext *ctx, uint16_t reg) {
 }
 
 void snes_step_frame(SnesCpuContext *ctx, uint16_t pad1, uint16_t pad2, uint32_t *argb_out) {
-    if (ctx->apu_core != NULL) {
-        snes_apu_begin_frame(ctx->apu_core);
-    }
     ctx->cpu_io.joy_pads[0] = pad1;
     ctx->cpu_io.joy_pads[1] = pad2;
     ctx->cpu_io.rdnmi_status = 0x82u;
+
+    /*
+     * Shared timeline: ctx->nmi_wall is when this frame's NMI fires. If the CPU is still
+     * running last frame's logic at that moment, Konami's re-entrancy guard ($00:81C6,
+     * $003C != 0) returns at once: a lag frame (no game logic, joypad not read, the PPU
+     * scans out unchanged state). Without the lag model the overrun is absorbed instead:
+     * the frame grid slides to "now", so video never drops frames but the APU still
+     * experiences the real elapsed time.
+     */
+    uint64_t wall = snes_wall_cycles(ctx);
+    bool lagged = false;
+    if (wall > ctx->nmi_wall) {
+        if (ctx->lag_budget != 0u) {
+            lagged = true;
+        } else {
+            ctx->spc_at_nmi = snes_spc_time_now(ctx);
+            ctx->nmi_wall = wall;
+        }
+    }
+    uint64_t over = (wall > ctx->nmi_wall) ? wall - ctx->nmi_wall : 0u;
+    ctx->lag_debt = (over > 0xFFFFFFFFull) ? 0xFFFFFFFFu : (uint32_t)over;
+    if (wall < ctx->nmi_wall) {
+        ctx->idle_cycles += ctx->nmi_wall - wall; /* background loop idles until VBlank */
+    }
+    snes_apu_sync(ctx);
+    ctx->last_frame_lagged = lagged;
 
     SnesMmioReadHook prev_hook = ctx->on_read_cpu_io;
     g_active_render_buf = argb_out;
@@ -774,16 +797,7 @@ void snes_step_frame(SnesCpuContext *ctx, uint16_t pad1, uint16_t pad2, uint32_t
         ctx->on_read_cpu_io = ppu_frame_read_cpu_io_hook;
     }
 
-    /*
-     * Lag model: when the previous NMI's work overran its frame, this frame's NMI lands
-     * while the game is still busy. Konami's re-entrancy guard ($00:81C6, $003C != 0)
-     * returns immediately, so no game logic runs and the joypad is not read; the PPU
-     * still scans out the unchanged state. The overrun is paid down one frame at a time.
-     */
-    bool lagged = ctx->lag_budget != 0u && ctx->lag_debt != 0u;
-    ctx->last_frame_lagged = lagged;
     if (lagged) {
-        ctx->lag_debt = (ctx->lag_debt > ctx->lag_budget) ? (ctx->lag_debt - ctx->lag_budget) : 0u;
         ctx->lag_frames++;
     } else if ((ctx->cpu_io.nmitimen & 0x80u) != 0u) {
         uint8_t saved_pb = ctx->pb;
@@ -795,16 +809,6 @@ void snes_step_frame(SnesCpuContext *ctx, uint16_t pad1, uint16_t pad2, uint32_t
         uint64_t used = ctx->cycles - start;
         ctx->last_nmi_cycles = (used > 0xFFFFFFFFull) ? 0xFFFFFFFFu : (uint32_t)used;
         ctx->last_nmi_apu_polls = ctx->apu.read_count - polls_start;
-        /*
-         * Only visible frames lag. Loading code runs with the display force-blanked and is
-         * dominated by SPC700 upload handshakes, whose duration is not cycle-accurate yet
-         * (the APU advances per port poll, not per CPU cycle), so load time is not modelled.
-         */
-        uint8_t inidisp = ctx->ppu.regs[0x00u];
-        bool displayed = (inidisp & 0x80u) == 0u && (inidisp & 0x0Fu) != 0u;
-        if (ctx->lag_budget != 0u && displayed && ctx->last_nmi_cycles > ctx->lag_budget) {
-            ctx->lag_debt = ctx->last_nmi_cycles - ctx->lag_budget;
-        }
     }
 
     ctx->on_read_cpu_io = prev_hook;
@@ -823,8 +827,11 @@ void snes_step_frame(SnesCpuContext *ctx, uint16_t pad1, uint16_t pad2, uint32_t
         }
     }
 
+    /* Next NMI; the SPC700 runs on to it (or to "now" if the CPU has already passed it) */
+    snes_timeline_next_frame(ctx);
     if (ctx->apu_core != NULL) {
-        snes_apu_end_frame(ctx->apu_core);
+        uint64_t target = snes_spc_time_now(ctx);
+        snes_apu_run_to(ctx->apu_core, (target > ctx->spc_at_nmi) ? target : ctx->spc_at_nmi);
     }
 }
 

@@ -436,8 +436,12 @@ static void on_unresolved_jump(SnesCpuContext *ctx, uint32_t target_addr24) {
 }
 
 static void power_on(SnesCpuContext *ctx, SnesApu *apu, const uint8_t *rom, size_t rom_size) {
+    void (*sink)(void *, int16_t, int16_t) = apu->pcm_sink; /* host capture survives power cycles */
+    void *sink_user = apu->pcm_sink_user;
     snes_context_init(ctx, rom, rom_size);
     snes_apu_init(apu);
+    apu->pcm_sink = sink;
+    apu->pcm_sink_user = sink_user;
     snes_apu_attach(ctx, apu);
     ctx->on_interp_fallback = on_unresolved_jump;
     ctx->strict_fallback = g_strict_fallback;
@@ -734,6 +738,36 @@ static void probe_sample(SnesCpuContext *ctx, ProbeSample *s) {
     s->rng_hi    = snes_bus_read16(ctx, PROBE_PRNG_HI);
 }
 
+/* Growable 32 kHz stereo capture fed directly by the S-DSP (snes_apu pcm_sink) */
+typedef struct WavCapture {
+    int16_t *data;
+    size_t   frames;
+    size_t   cap;
+    bool     failed;
+} WavCapture;
+
+static WavCapture g_wav;
+
+static void wav_sink(void *user, int16_t l, int16_t r) {
+    WavCapture *w = (WavCapture *)user;
+    if (w->failed) {
+        return;
+    }
+    if (w->frames == w->cap) {
+        size_t ncap = (w->cap == 0u) ? (size_t)1u << 20 : w->cap * 2u;
+        int16_t *nd = (int16_t *)realloc(w->data, ncap * 2u * sizeof(int16_t));
+        if (nd == NULL) {
+            w->failed = true;
+            return;
+        }
+        w->data = nd;
+        w->cap = ncap;
+    }
+    w->data[w->frames * 2u + 0u] = l;
+    w->data[w->frames * 2u + 1u] = r;
+    w->frames++;
+}
+
 static int run_headless(const uint8_t *rom, size_t rom_size, const HeadlessOptions *opt) {
     power_on(&g_ctx, &g_apu, rom, rom_size);
 
@@ -744,9 +778,11 @@ static int run_headless(const uint8_t *rom, size_t rom_size, const HeadlessOptio
         total_frames = (n > 0) ? (unsigned)n : 0u;
     }
 
-    size_t   wav_cap    = (opt->wav_path != NULL) ? ((size_t)total_frames * 540u) : 0u;
-    int16_t *wav_buf    = (wav_cap > 0u) ? (int16_t *)malloc(wav_cap * 2u * sizeof(int16_t)) : NULL;
-    size_t   wav_frames = 0u;
+    /* Lossless capture: long loads can produce seconds of audio inside a single frame */
+    if (opt->wav_path != NULL) {
+        g_apu.pcm_sink = wav_sink;
+        g_apu.pcm_sink_user = &g_wav;
+    }
 
     FILE *trace = NULL;
     if (opt->trace_path != NULL) {
@@ -862,11 +898,7 @@ static int run_headless(const uint8_t *rom, size_t rom_size, const HeadlessOptio
         snes_step_frame(&g_ctx, pad1, pad2, need_render ? g_framebuf : NULL);
         snes_movie_record_frame(&rec, pad1, pad2, flags);
 
-        if (wav_buf != NULL && wav_frames < wav_cap) {
-            wav_frames += snes_apu_pop_samples(&g_apu, &wav_buf[wav_frames * 2u], wav_cap - wav_frames);
-        } else {
-            snes_apu_clear_samples(&g_apu);
-        }
+        snes_apu_clear_samples(&g_apu);
 
         for (unsigned d = 0u; d < opt->num_dumps; ++d) {
             if (opt->dumps[d].frame == f) {
@@ -953,11 +985,12 @@ static int run_headless(const uint8_t *rom, size_t rom_size, const HeadlessOptio
         snes_movie_record_end(&rec);
     }
 
-    if (opt->wav_path != NULL && wav_buf != NULL) {
+    if (opt->wav_path != NULL) {
+        g_apu.pcm_sink = NULL;
         int32_t peak_abs = 0;
         size_t  nonzero  = 0u;
-        for (size_t i = 0u; i < wav_frames * 2u; ++i) {
-            int32_t smp = (int32_t)wav_buf[i];
+        for (size_t i = 0u; i < g_wav.frames * 2u; ++i) {
+            int32_t smp = (int32_t)g_wav.data[i];
             if (smp != 0) {
                 nonzero++;
                 int32_t a = (smp < 0) ? -smp : smp;
@@ -966,15 +999,18 @@ static int run_headless(const uint8_t *rom, size_t rom_size, const HeadlessOptio
                 }
             }
         }
-        if (snes_write_wav(opt->wav_path, wav_buf, wav_frames, SNES_AUDIO_SAMPLE_RATE)) {
+        if (g_wav.failed) {
+            fprintf(stderr, "Error: out of memory while capturing audio\n");
+        } else if (snes_write_wav(opt->wav_path, g_wav.data, g_wav.frames, SNES_AUDIO_SAMPLE_RATE)) {
             printf("[WAV] %s | %zu stereo frames (%.2f s @ %u Hz) | KON=%u | active=%zu | peak=%d\n",
-                   opt->wav_path, wav_frames,
-                   (double)wav_frames / (double)SNES_AUDIO_SAMPLE_RATE,
+                   opt->wav_path, g_wav.frames,
+                   (double)g_wav.frames / (double)SNES_AUDIO_SAMPLE_RATE,
                    SNES_AUDIO_SAMPLE_RATE,
                    g_apu.kon_events, nonzero, (int)peak_abs);
         }
+        free(g_wav.data);
+        memset(&g_wav, 0, sizeof(g_wav));
     }
-    free(wav_buf);
 
     if (mv != NULL) {
         printf("[MOVIE] consumed %lld/%u movie frames (%u emulator lag frames skipped)%s\n",

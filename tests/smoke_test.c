@@ -228,6 +228,9 @@ int main(int argc, char **argv) {
     bank00_func_8000(&apu_ctx);
     TEST_ASSERT(apu_core.ram[0x0200] == 0x5Fu,
                 "Real IPL ROM uploaded Konami SPC700 audio driver to ARAM $0200");
+    /* The driver launch ($FFF5 -> $0896) takes SPC700 time, which elapses with the first frame */
+    snes_step_frame(&apu_ctx, 0u, 0u, NULL);
+    snes_apu_clear_samples(&apu_core);
     TEST_ASSERT(apu_core.pc < 0xFFC0u && !apu_core.halted,
                 "Konami SPC700 audio driver booted and is actively executing");
 

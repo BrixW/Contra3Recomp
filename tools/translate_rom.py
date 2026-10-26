@@ -1207,7 +1207,7 @@ def translate_function(fb, fpc, fm, fx, reason, func_entries, indirect_sites):
         # Cooperative VBlank NMI delivery when spinning at $00:85EC inside VBlank_WaitFrame ($00:85DF)
         if fb == 0 and pc == 0x85EC:
             out.append("    if ((ctx->wram[0x003Cu] & 0x80u) != 0u) {")
-            out.append("        bank00_func_819b(ctx);")
+            out.append("        snes_cooperative_nmi(ctx);")
             out.append("    }")
 
         hex_bytes = " ".join(f"{b:02X}" for b in raw)

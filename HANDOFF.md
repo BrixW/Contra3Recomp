@@ -60,8 +60,8 @@ Verified end-to-end with zero compiler warnings (`gcc -std=c11 -O2 -Wall -Wextra
 ### A2. Calibrate the lag model (needs the same emulator trace)
 `--lag-model` already reproduces Konami's NMI busy-guard slowdown from per-instruction 65C816 cycle costs, but the 45,642-cycle budget is an estimate. Run the movie with `--lag-model` (no `--lag-from`) and use `python tools/compare_trace.py emu_trace.csv ours.csv --lag-report` to tune it. A tighter budget is very sensitive: 40,000 cycles roughly doubles the lag frames on Stage 4 2P. Once recall and precision are high, `--lag-model` can become the default and `--lag-from` unnecessary.
 
-### A3. Cycle-accurate CPU/APU synchronisation
-The SPC700 advances 24 cycles per port poll (`snes_apu_read_port`) instead of tracking `ctx->cycles`. Driving it from the CPU cycle counter would make upload handshakes, and therefore load times and force-blanked lag, take real time.
+### A3. CPU/APU synchronisation (done)
+The SPC700 now runs on the CPU's timeline (`snes_apu_sync` before every `$2140–$2143` access, plus every frame boundary), so upload handshakes and loads take real time. The emulator comparison in §A/§A2 is also the way to validate load durations: Stage 1 intro card about 4 s, power-on about 2 s with `--lag-model`.
 
 ### B. Optional polish
 - **Persistent cartridge config**: save/load `ctx.wram[0x1E00..0x1FFF]` to `contra3_nvram.bin`.

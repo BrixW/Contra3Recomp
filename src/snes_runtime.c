@@ -3,6 +3,7 @@
 #include <string.h>
 #include "cpu_65816.h"
 #include "snes_apu.h"
+#include "contra3_recomp.h"
 
 /* Forward declaration of generated global function dispatcher (src/dispatch.c) */
 bool contra3_dispatch_call(SnesCpuContext *ctx, uint32_t addr24);
@@ -377,6 +378,7 @@ void snes_hw_write_apu(SnesCpuContext *ctx, uint16_t reg, uint8_t val) {
     ctx->apu.cpu_to_apu[port] = val;
     ctx->apu.write_count++;
     if (ctx->apu_core != NULL) {
+        snes_apu_sync(ctx); /* the SPC700 sees the write at the 65816's current time */
         snes_apu_write_port(ctx->apu_core, port, val);
         return;
     }
@@ -394,6 +396,7 @@ uint8_t snes_hw_read_apu(SnesCpuContext *ctx, uint16_t reg) {
     uint8_t port = (uint8_t)((reg - 0x2140u) & 0x03u);
     ctx->apu.read_count++;
     if (ctx->apu_core != NULL) {
+        snes_apu_sync(ctx); /* the SPC700 has run up to "now" before the 65816 samples the port */
         uint8_t v = snes_apu_read_port(ctx->apu_core, port);
         ctx->apu.apu_to_cpu[port] = v;
         return v;
@@ -667,3 +670,68 @@ void snes_interp_fallback_at(SnesCpuContext *ctx, uint32_t site_addr24, uint32_t
 void snes_interp_fallback(SnesCpuContext *ctx, uint32_t target_addr24) {
     snes_interp_fallback_at(ctx, SNES_FALLBACK_SITE_UNKNOWN, target_addr24);
 }
+
+/* ------------------------------------------------------------------------- */
+/* Shared CPU/APU timeline                                                   */
+/* ------------------------------------------------------------------------- */
+
+/* SPC700 cycles per NTSC frame: 1,024,000 Hz / 60.0988 Hz, as an exact running fraction */
+#define SPC_HZ_X1000      1024000000u
+#define NTSC_MILLIHZ      60099u
+
+static uint32_t spc_cycles_for_next_frame(SnesCpuContext *ctx) {
+    ctx->spc_frame_frac += SPC_HZ_X1000 % NTSC_MILLIHZ;
+    uint32_t cycles = SPC_HZ_X1000 / NTSC_MILLIHZ;
+    if (ctx->spc_frame_frac >= NTSC_MILLIHZ) {
+        ctx->spc_frame_frac -= NTSC_MILLIHZ;
+        cycles++;
+    }
+    return cycles;
+}
+
+uint32_t snes_timing_budget(const SnesCpuContext *ctx) {
+    return (ctx->lag_budget != 0u) ? ctx->lag_budget : SNES_LAG_BUDGET_DEFAULT;
+}
+
+uint64_t snes_wall_cycles(const SnesCpuContext *ctx) {
+    return ctx->cycles + ctx->idle_cycles;
+}
+
+uint64_t snes_spc_time_now(const SnesCpuContext *ctx) {
+    uint64_t wall = snes_wall_cycles(ctx);
+    uint64_t frame = (ctx->spc_frame_cycles != 0u) ? ctx->spc_frame_cycles : (SPC_HZ_X1000 / NTSC_MILLIHZ);
+    uint64_t budget = snes_timing_budget(ctx);
+    if (wall >= ctx->nmi_wall) {
+        return ctx->spc_at_nmi + ((wall - ctx->nmi_wall) * frame) / budget;
+    }
+    uint64_t back = ((ctx->nmi_wall - wall) * frame) / budget;
+    return (back < ctx->spc_at_nmi) ? ctx->spc_at_nmi - back : 0u;
+}
+
+void snes_apu_sync(SnesCpuContext *ctx) {
+    if (ctx->apu_core != NULL) {
+        snes_apu_run_to(ctx->apu_core, snes_spc_time_now(ctx));
+    }
+}
+
+void snes_timeline_next_frame(SnesCpuContext *ctx) {
+    if (ctx->spc_frame_cycles == 0u) {
+        ctx->spc_frame_cycles = spc_cycles_for_next_frame(ctx);
+    }
+    ctx->nmi_wall   += snes_timing_budget(ctx);
+    ctx->spc_at_nmi += ctx->spc_frame_cycles;
+    ctx->spc_frame_cycles = spc_cycles_for_next_frame(ctx);
+}
+
+void snes_cooperative_nmi(SnesCpuContext *ctx) {
+    /* The main thread spins until the next grid NMI: that time passes for the APU too */
+    uint64_t wall = snes_wall_cycles(ctx);
+    if (wall < ctx->nmi_wall) {
+        ctx->idle_cycles += ctx->nmi_wall - wall;
+    }
+    snes_apu_sync(ctx);
+    ctx->cooperative_nmis++;
+    bank00_func_819b(ctx);
+    snes_timeline_next_frame(ctx);
+}
+

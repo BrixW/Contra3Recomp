@@ -78,19 +78,17 @@ typedef struct SnesApu {
     SnesDsp  dsp;
 
     /* Cycle Synchronization & Stereo 16-bit 32 kHz PCM Ring Buffer */
-    uint64_t total_cycles;
+    uint64_t total_cycles;          /* SPC700 time; driven by the CPU timeline via snes_apu_run_to */
     uint32_t dsp_cycle_accum;       /* 32 SPC cycles == 1 S-DSP 32 kHz sample */
-    uint32_t frame_cycles_run;      /* SPC cycles already stepped during current video frame */
-    uint32_t frame_samples_emitted; /* PCM frames pushed during current video frame */
-    uint32_t frame_samples_quota;   /* Target PCM frames for current video frame (~532.46) */
-    uint32_t frame_sample_frac;     /* Fractional sample remainder across 60.0988 Hz frames */
-    bool     pcm_emit_enabled;      /* Enabled once active video frames begin */
 
     int16_t  pcm_ring[SNES_APU_RING_FRAMES * 2u];
     uint32_t pcm_read_pos;
     uint32_t pcm_write_pos;
     uint32_t pcm_count;
     uint64_t total_samples_emitted;
+    /* Optional host sink: when set, every sample goes here instead of the ring (lossless capture) */
+    void   (*pcm_sink)(void *user, int16_t l, int16_t r);
+    void    *pcm_sink_user;
     uint32_t kon_events;            /* Diagnostic count of S-DSP voice key-ons */
 } SnesApu;
 
@@ -107,9 +105,13 @@ uint8_t snes_apu_read_port(SnesApu *apu, uint8_t port);
 /* Step SPC700 + Timers + S-DSP by N 1.024 MHz cycles */
 void    snes_apu_step_cycles(SnesApu *apu, uint32_t cycles);
 
-/* Frame boundary hooks called by snes_step_frame */
-void    snes_apu_begin_frame(SnesApu *apu);
-void    snes_apu_end_frame(SnesApu *apu);
+/*
+ * Run the SPC700 + S-DSP until total_cycles reaches spc_time (instruction granular; never
+ * runs backwards). The 65816 side calls this through snes_apu_sync() before every
+ * $2140-$2143 access and at every frame boundary, so both chips share one timeline and
+ * exactly one 32 kHz sample is produced per 32 SPC cycles.
+ */
+void    snes_apu_run_to(SnesApu *apu, uint64_t spc_time);
 
 /* Pop interleaved 16-bit stereo PCM frames (L, R) from ring buffer; returns frames popped */
 size_t  snes_apu_pop_samples(SnesApu *apu, int16_t *stereo_out, size_t max_frames);

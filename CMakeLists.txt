@@ -46,3 +46,8 @@ add_executable(contra3_replay_test tests/replay_test.c)
 target_link_libraries(contra3_replay_test PRIVATE contra3_recomp)
 add_test(NAME contra3_replay_test
          COMMAND contra3_replay_test --golden ${CMAKE_CURRENT_SOURCE_DIR}/tests/golden)
+
+# Tests locate the ROM through $CONTRA3_ROM; default to the project's sibling ROM folder
+set(CONTRA3_ROM "${CMAKE_CURRENT_SOURCE_DIR}/../ROM/Contra III - The Alien Wars (USA).sfc"
+    CACHE FILEPATH "Contra III (USA) ROM image used by the tests")
+set_tests_properties(contra3_smoke_test contra3_replay_test PROPERTIES ENVIRONMENT "CONTRA3_ROM=${CONTRA3_ROM}")

@@ -1193,14 +1193,11 @@ static void spc_step_timers(SnesApu *apu, uint32_t cycles) {
 }
 
 static void apu_push_stereo_sample(SnesApu *apu, int16_t l, int16_t r) {
-    if (!apu->pcm_emit_enabled) {
-        return;
-    }
-    if (apu->frame_samples_quota > 0u && apu->frame_samples_emitted >= apu->frame_samples_quota) {
-        return;
-    }
-    apu->frame_samples_emitted++;
     apu->total_samples_emitted++;
+    if (apu->pcm_sink != NULL) {
+        apu->pcm_sink(apu->pcm_sink_user, l, r);
+        return;
+    }
 
     if (apu->pcm_count >= SNES_APU_RING_FRAMES) {
         /* Drop oldest sample on ring overflow so latency never grows unbounded */
@@ -1219,7 +1216,6 @@ void snes_apu_step_cycles(SnesApu *apu, uint32_t cycles) {
         uint32_t c = spc_step_instruction(apu);
         ran += c;
         apu->total_cycles += c;
-        apu->frame_cycles_run += c;
         spc_step_timers(apu, c);
 
         apu->dsp_cycle_accum += c;
@@ -1246,8 +1242,21 @@ void snes_apu_init(SnesApu *apu) {
             break;
         }
     }
+    /* SPC700 time zero is the CPU's power-on; the IPL boot above happens "before" it */
     apu->dsp_cycle_accum = 0u;
-    apu->frame_cycles_run = 0u;
+    apu->total_cycles = 0u;
+    apu->pcm_read_pos = apu->pcm_write_pos = apu->pcm_count = 0u;
+}
+
+void snes_apu_run_to(SnesApu *apu, uint64_t spc_time) {
+    if (apu == NULL || spc_time <= apu->total_cycles) {
+        return;
+    }
+    /* Large gaps (long loads) are stepped in bounded slices to keep the 32-bit step API */
+    while (apu->total_cycles < spc_time) {
+        uint64_t gap = spc_time - apu->total_cycles;
+        snes_apu_step_cycles(apu, (gap > 0x10000000u) ? 0x10000000u : (uint32_t)gap);
+    }
 }
 
 void snes_apu_attach(SnesCpuContext *ctx, SnesApu *apu) {
@@ -1263,58 +1272,12 @@ void snes_apu_attach(SnesCpuContext *ctx, SnesApu *apu) {
 }
 
 void snes_apu_write_port(SnesApu *apu, uint8_t port, uint8_t val) {
+    /* The caller has already run the SPC700 up to the 65816's current time (snes_apu_sync) */
     apu->cpu_to_apu[port & 3u] = val;
-    /*
-     * At the end of an upload ($00:9416-$00:9423), the 65816 sets $2141=0x00, handshakes
-     * $2140, and executes STZ $2140 ($2140=0x00 while $2141==0x00).
-     * Advance SPC700 so either the cold IPL launch ($FFF5->$0896, ~24k cycles) or Konami's
-     * warm sample uploader ($1B2D->$1B36: MOV !$00F1,#$31; RET) completes before the next
-     * 65816 command byte is written to $2140.
-     */
-    if ((port & 3u) == 0u && val == 0u && apu->cpu_to_apu[1] == 0u) {
-        if ((apu->f1_control & 0x80u) != 0u && apu->pc >= 0xFFF5u) {
-            snes_apu_step_cycles(apu, 24000u);
-        } else if (apu->pc < 0xFFC0u) {
-            snes_apu_step_cycles(apu, 512u);
-        }
-    }
 }
 
 uint8_t snes_apu_read_port(SnesApu *apu, uint8_t port) {
-    /* Advance SPC700 by ~24 cycles per 65816 MMIO poll so IPL/driver handshakes progress smoothly */
-    snes_apu_step_cycles(apu, 24u);
     return apu->apu_to_cpu[port & 3u];
-}
-
-void snes_apu_begin_frame(SnesApu *apu) {
-    if (apu == NULL) {
-        return;
-    }
-    apu->pcm_emit_enabled = true;
-    /* Carry <32-cycle instruction remainder so 1:32 SPC-to-DSP clock never drops or invents samples */
-    apu->frame_cycles_run = apu->dsp_cycle_accum;
-    apu->frame_samples_emitted = 0u;
-
-    /* Exact 32,000 Hz / 60.0988139 Hz = 532.45642 stereo frames per NTSC VBlank */
-    apu->frame_sample_frac += 32000000u;
-    apu->frame_samples_quota = apu->frame_sample_frac / 60099u;
-    apu->frame_sample_frac  %= 60099u;
-}
-
-void snes_apu_end_frame(SnesApu *apu) {
-    if (apu == NULL) {
-        return;
-    }
-    uint32_t target_cycles = apu->frame_samples_quota * 32u;
-    if (apu->frame_cycles_run < target_cycles) {
-        snes_apu_step_cycles(apu, target_cycles - apu->frame_cycles_run);
-    }
-    /* Ensure exact quota of stereo PCM samples is emitted even if dsp_cycle_accum had <32 rem */
-    while (apu->frame_samples_emitted < apu->frame_samples_quota) {
-        int16_t l = 0, r = 0;
-        dsp_tick_sample(apu, &l, &r);
-        apu_push_stereo_sample(apu, l, r);
-    }
 }
 
 size_t snes_apu_pop_samples(SnesApu *apu, int16_t *stereo_out, size_t max_frames) {

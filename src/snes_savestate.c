@@ -142,6 +142,8 @@ SnesSavestateResult snes_savestate_load(const char *path, SnesCpuContext *ctx, S
     new_ctx->on_interp_fallback = ctx->on_interp_fallback;
     new_ctx->strict_fallback    = ctx->strict_fallback;
     new_ctx->apu_core           = ctx->apu_core;
+    new_apu->pcm_sink      = apu->pcm_sink;
+    new_apu->pcm_sink_user = apu->pcm_sink_user;
     memcpy(ctx, new_ctx, sizeof(*ctx));
     memcpy(apu, new_apu, sizeof(*apu));
     snes_apu_clear_samples(apu);

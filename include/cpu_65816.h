@@ -74,9 +74,22 @@ typedef struct SnesCpuContext {
     uint32_t last_nmi_cycles;     /* Cycles consumed by the most recent serviced NMI (game logic frame) */
     uint32_t last_nmi_apu_polls;  /* APU port reads during that NMI (SPC700 upload handshakes) */
     uint32_t lag_budget;          /* CPU cycles per frame; 0 disables the lag model (every NMI serviced) */
-    uint32_t lag_debt;            /* Work still running past the frame boundary (cycles) */
+    uint32_t lag_debt;            /* Diagnostic: how far the CPU ran past this frame's NMI (cycles) */
     uint32_t lag_frames;          /* Frames whose NMI found the game busy ($003C guard) */
     bool     last_frame_lagged;   /* The most recent snes_step_frame was a lag frame */
+
+    /*
+     * Shared CPU/APU timeline. Wall time (in CPU cycles) = cycles + idle_cycles, where
+     * idle_cycles accumulates time the CPU spends waiting for the next NMI. NMIs fire on a
+     * fixed grid (nmi_wall, one budget apart); spc_at_nmi is the SPC700 time at nmi_wall and
+     * spc_frame_cycles the SPC cycles in the current frame (32 kHz x 32 / 60.0988 Hz, ~17038.6).
+     */
+    uint64_t idle_cycles;
+    uint64_t nmi_wall;
+    uint64_t spc_at_nmi;
+    uint32_t spc_frame_cycles;
+    uint32_t spc_frame_frac;
+    uint32_t cooperative_nmis;    /* VBlank waits serviced from the main thread ($00:85EC) */
     struct SnesApu *apu_core;     /* Optional live Sony S-SMP (SPC700) + S-DSP audio core */
 } SnesCpuContext;
 
@@ -109,6 +122,18 @@ void     snes_block_mvp(SnesCpuContext *ctx, uint8_t dst_bank, uint8_t src_bank)
  */
 void     snes_interp_fallback_at(SnesCpuContext *ctx, uint32_t site_addr24, uint32_t target_addr24);
 void     snes_interp_fallback(SnesCpuContext *ctx, uint32_t target_addr24); /* site unknown */
+
+/* --- Shared CPU/APU timeline (src/snes_runtime.c) --- */
+uint32_t snes_timing_budget(const SnesCpuContext *ctx);   /* CPU cycles per frame */
+uint64_t snes_wall_cycles(const SnesCpuContext *ctx);     /* cycles + idle_cycles */
+uint64_t snes_spc_time_now(const SnesCpuContext *ctx);    /* SPC700 time matching the CPU's wall time */
+void     snes_apu_sync(SnesCpuContext *ctx);              /* Run the attached APU up to snes_spc_time_now */
+void     snes_timeline_next_frame(SnesCpuContext *ctx);   /* Advance the NMI grid by one frame */
+/*
+ * Main-thread VBlank wait ($00:85DF spinning at $00:85EC): the CPU idles until the next
+ * grid NMI, the APU catches up, then NMI_Handler runs (emitted by tools/translate_rom.py).
+ */
+void     snes_cooperative_nmi(SnesCpuContext *ctx);
 
 /* --- Status Register (P) Pack / Unpack --- */
 static inline uint8_t snes_pack_p(const SnesCpuContext *ctx) {
