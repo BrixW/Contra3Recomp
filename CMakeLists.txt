@@ -18,6 +18,7 @@ add_library(contra3_recomp STATIC
     src/snes_movie.c
     src/snes_savestate.c
     src/snes_rom.c
+    src/contra3_extras.c
     src/bank_00.c
     src/bank_01.c
     src/bank_02.c
@@ -33,7 +34,7 @@ target_include_directories(contra3_recomp PUBLIC
 )
 
 if(WIN32)
-    add_executable(contra3 src/win32_main.c src/win32_gl.c)
+    add_executable(contra3 src/win32_main.c src/win32_gl.c src/win32_config.c)
     target_link_libraries(contra3 PRIVATE contra3_recomp opengl32 gdi32 winmm comdlg32)
 endif()
 

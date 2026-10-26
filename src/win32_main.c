@@ -45,7 +45,9 @@
 #include "snes_movie.h"
 #include "snes_savestate.h"
 #include "snes_rom.h"
+#include "contra3_extras.h"
 #include "win32_gl.h"
+#include "win32_config.h"
 
 /* Minimal XInput structures for zero-dependency dynamic controller support */
 typedef struct Win32XInputGamepad {
@@ -304,27 +306,13 @@ static uint16_t poll_xinput_pad(DWORD index) {
     return mask;
 }
 
-static uint16_t poll_keyboard_pad1(HWND hwnd) {
+static Contra3Config g_config;
+
+static uint16_t poll_keyboard_pad(HWND hwnd, unsigned player) {
     if (GetForegroundWindow() != hwnd) {
         return 0u;
     }
-    uint16_t mask = 0u;
-    #define KEY_DOWN(vk) ((GetAsyncKeyState(vk) & 0x8000) != 0)
-    if (KEY_DOWN(VK_UP))                     mask |= SNES_BTN_UP;
-    if (KEY_DOWN(VK_DOWN))                   mask |= SNES_BTN_DOWN;
-    if (KEY_DOWN(VK_LEFT))                   mask |= SNES_BTN_LEFT;
-    if (KEY_DOWN(VK_RIGHT))                  mask |= SNES_BTN_RIGHT;
-
-    if (KEY_DOWN('Z') || KEY_DOWN('J'))      mask |= SNES_BTN_B;      /* Jump */
-    if (KEY_DOWN('X') || KEY_DOWN('K'))      mask |= SNES_BTN_Y;      /* Shoot */
-    if (KEY_DOWN('A') || KEY_DOWN('U'))      mask |= SNES_BTN_X;      /* Switch Weapon */
-    if (KEY_DOWN('S') || KEY_DOWN('I'))      mask |= SNES_BTN_A;      /* Mega Bomb */
-    if (KEY_DOWN('Q') || KEY_DOWN('L'))      mask |= SNES_BTN_L;      /* Lock Aim */
-    if (KEY_DOWN('E') || KEY_DOWN('O'))      mask |= SNES_BTN_R;      /* Dual Fire */
-    if (KEY_DOWN(VK_RETURN))                 mask |= SNES_BTN_START;  /* Start */
-    if (KEY_DOWN(VK_RSHIFT) || KEY_DOWN(VK_BACK)) mask |= SNES_BTN_SELECT; /* Select */
-    #undef KEY_DOWN
-    return mask;
+    return contra3_config_poll(&g_config, player);
 }
 
 static void toggle_fullscreen(HWND hwnd) {
@@ -411,6 +399,7 @@ static void soft_reset(SnesCpuContext *ctx, SnesApu *apu) {
 
 static bool     g_strict_fallback = false;
 static uint32_t g_lag_budget      = 0u;   /* CPU cycles per frame for the lag model (0 = off) */
+static unsigned g_unlocks         = 0u;   /* CONTRA3_UNLOCK_* (restored Contra Spirits features) */
 static uint32_t g_frame_number    = 0u;   /* Frames stepped since launch (for diagnostics) */
 
 /* Report every unresolved indirect target immediately, with the dispatch site and frame */
@@ -517,6 +506,10 @@ static LRESULT CALLBACK contra3_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPAR
                     }
                 } else if (wparam == VK_SPACE && g_paused) {
                     g_step_once = true;
+                } else if (wparam == VK_F4) {
+                    g_unlocks ^= CONTRA3_UNLOCK_STAGE_SELECT;
+                    set_status(hwnd, (g_unlocks & CONTRA3_UNLOCK_STAGE_SELECT)
+                                         ? "Stage select ON (press START on the title screen)" : "Stage select OFF");
                 } else if (wparam == VK_F3) {
                     g_lag_budget = (g_lag_budget != 0u) ? 0u : SNES_LAG_BUDGET_DEFAULT;
                     g_ctx.lag_budget = g_lag_budget;
@@ -896,6 +889,7 @@ static int run_headless(const uint8_t *rom, size_t rom_size, const HeadlessOptio
 
         g_frame_number++;
         snes_step_frame(&g_ctx, pad1, pad2, need_render ? g_framebuf : NULL);
+        contra3_apply_unlocks(&g_ctx, g_unlocks);
         snes_movie_record_frame(&rec, pad1, pad2, flags);
 
         snes_apu_clear_samples(&g_apu);
@@ -1180,6 +1174,8 @@ static void print_usage(void) {
         "  --verify                  Print state/stage progress, detect hangs, summarize the run\n"
         "  --hang-frames <n>         Frames without a logic-frame tick that count as a hang (default 600)\n"
         "  --strict                  Abort with a register dump on the first unresolved indirect jump\n"
+        "  --stage-select            Restore Konami's STAGE SELECT screen (START on the title; F4 toggles)\n"
+        "  --30-lives                Start with 30 lives (restored Contra Spirits code effect)\n"
         "  --lag-model [cycles]      Authentic slowdown: drop logic frames when an NMI overruns its CPU budget (F3)\n"
         "  --infinite-lives          Refill a player's lives when they reach the last one (soak testing)\n"
         "  --gl-selftest <prefix>    Render a Stage 1 frame through every OpenGL filter and verify readback\n");
@@ -1191,6 +1187,7 @@ int main(int argc, char **argv) {
     const char *lag_path = NULL;
     bool headless = false;
     bool force_gdi = false;
+    bool cli_filter = false, cli_integer = false, cli_vsync = false, cli_lag = false;
     const char *gl_selftest = NULL;
     ScriptPress presses[64];
     ScriptDump dumps[64];
@@ -1250,9 +1247,14 @@ int main(int argc, char **argv) {
             opt.trace_path = argv[++i];
         } else if (strcmp(argv[i], "--verify") == 0) {
             opt.verify = true;
+        } else if (strcmp(argv[i], "--stage-select") == 0) {
+            g_unlocks |= CONTRA3_UNLOCK_STAGE_SELECT;
+        } else if (strcmp(argv[i], "--30-lives") == 0) {
+            g_unlocks |= CONTRA3_UNLOCK_LIVES_30;
         } else if (strcmp(argv[i], "--lag-model") == 0) {
             /* Optional numeric budget may follow: --lag-model 45642 */
             g_lag_budget = SNES_LAG_BUDGET_DEFAULT;
+            cli_lag = true;
             if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') {
                 g_lag_budget = (uint32_t)strtoul(argv[++i], NULL, 10);
             }
@@ -1268,10 +1270,13 @@ int main(int argc, char **argv) {
             force_gdi = true;
         } else if (strcmp(argv[i], "--vsync") == 0) {
             g_vsync = true;
+            cli_vsync = true;
         } else if (strcmp(argv[i], "--integer") == 0) {
             g_integer_scale = true;
+            cli_integer = true;
         } else if (strcmp(argv[i], "--filter") == 0 && i + 1 < argc) {
             const char *fl = argv[++i];
+            cli_filter = true;
             g_gl_filter = (strcmp(fl, "crt") == 0)     ? WIN32_GL_FILTER_CRT :
                           (strcmp(fl, "nearest") == 0) ? WIN32_GL_FILTER_NEAREST : WIN32_GL_FILTER_SHARP;
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -1286,10 +1291,10 @@ int main(int argc, char **argv) {
 
     /* Resolve the ROM: argument / drag-and-drop, $CONTRA3_ROM, standard locations, then a file dialog */
     static char found_rom[MAX_PATH];
+    char exe_path[MAX_PATH], exe_dir[MAX_PATH];
+    DWORD exe_len = GetModuleFileNameA(NULL, exe_path, (DWORD)sizeof(exe_path));
+    snes_rom_dirname((exe_len > 0u && exe_len < sizeof(exe_path)) ? exe_path : argv[0], exe_dir, sizeof(exe_dir));
     if (rom_path == NULL) {
-        char exe_path[MAX_PATH], exe_dir[MAX_PATH];
-        DWORD n = GetModuleFileNameA(NULL, exe_path, (DWORD)sizeof(exe_path));
-        snes_rom_dirname((n > 0u && n < sizeof(exe_path)) ? exe_path : argv[0], exe_dir, sizeof(exe_dir));
         bool interactive = !headless && gl_selftest == NULL;
         if (snes_rom_find(exe_dir, found_rom, sizeof(found_rom)) ||
             (interactive && prompt_for_rom(found_rom, sizeof(found_rom)))) {
@@ -1356,6 +1361,23 @@ int main(int argc, char **argv) {
         return rc;
     }
 
+    contra3_config_load(&g_config, exe_dir);
+    if (!cli_filter) {
+        g_gl_filter = (strcmp(g_config.filter, "crt") == 0)     ? WIN32_GL_FILTER_CRT :
+                      (strcmp(g_config.filter, "nearest") == 0) ? WIN32_GL_FILTER_NEAREST : WIN32_GL_FILTER_SHARP;
+    }
+    if (!cli_integer) {
+        g_integer_scale = g_config.integer_scale;
+    }
+    if (!cli_vsync) {
+        g_vsync = g_config.vsync;
+    }
+    if (!cli_lag) {
+        g_lag_budget = g_config.lag_model ? SNES_LAG_BUDGET_DEFAULT : 0u;
+    }
+    const Win32GlFilter start_filter = g_gl_filter;
+    const bool start_integer = g_integer_scale;
+    const uint32_t start_lag = g_lag_budget;
     init_xinput();
     win32_audio_init();
     power_on(&g_ctx, &g_apu, rom, rom_size);
@@ -1447,11 +1469,12 @@ int main(int argc, char **argv) {
                 }
             } else {
                 g_movie_active = false; /* Movie finished (or none): input comes from the player */
-                pad1 = (uint16_t)(poll_keyboard_pad1(hwnd) | poll_xinput_pad(0u));
-                pad2 = poll_xinput_pad(1u);
+                pad1 = (uint16_t)(poll_keyboard_pad(hwnd, 0u) | poll_xinput_pad(0u));
+                pad2 = (uint16_t)(poll_keyboard_pad(hwnd, 1u) | poll_xinput_pad(1u));
             }
             g_frame_number++;
             snes_step_frame(&g_ctx, pad1, pad2, g_framebuf);
+            contra3_apply_unlocks(&g_ctx, g_unlocks);
             snes_movie_record_frame(&g_recorder, pad1, pad2, flags);
             win32_audio_pump(turbo, false);
             g_step_once = false;
@@ -1514,6 +1537,13 @@ int main(int argc, char **argv) {
     }
 
     timeEndPeriod(1u);
+    if (g_gl_filter != start_filter || g_integer_scale != start_integer || (g_lag_budget != 0u) != (start_lag != 0u)) {
+        static const char *const filter_names[] = { "sharp", "nearest", "crt" };
+        snprintf(g_config.filter, sizeof(g_config.filter), "%s", filter_names[g_gl_filter]);
+        g_config.integer_scale = g_integer_scale;
+        g_config.lag_model = g_lag_budget != 0u;
+        contra3_config_save(&g_config);
+    }
     snes_movie_record_end(&g_recorder);
     win32_audio_shutdown();
     if (g_use_gl) {

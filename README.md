@@ -119,9 +119,12 @@ If none is found when launching the desktop app, it opens a file picker. Images 
 | Start / Pause | `Start` | `Enter` | `Start` |
 | Select | `Select` | `Right Shift` or `Backspace` | `Back` |
 
+All keyboard bindings live in `contra3.ini` next to `contra3.exe`. It is created with the defaults above on first run, takes up to four keys per button, and also stores the filter, integer-scaling, VSync and lag-model preferences; command-line options override it. **Player 2** can use the keyboard too: the numpad by default (`8/5/4/6` D-pad, `1` jump, `2` shoot, `3` switch, `0` bomb, `7`/`9` L/R, `+` Start, `-` Select), as well as XInput pad 2. Pressing opposite directions together cancels them, as on a real D-pad.
+
 ### Application Hotkeys
 - `Tab` (hold) / `F1` (toggle): Uncapped Turbo Fast-Forward
 - `F3`: Toggle authentic slowdown (the CPU-time lag model, see below)
+- `F4`: Toggle the restored **STAGE SELECT** screen (press START on the title screen; UP/DOWN choose 1–6). Also `--stage-select`, and `--30-lives` for 30 starting lives. These are the effects of *Contra Spirits* (Japan) codes whose detectors were disconnected in the US release.
 - `F6`: Start / stop recording an input movie (`contra3_rec_XXXX.c3m`; recording power-cycles the console so the movie replays from power-on)
 - `F9`: Cycle OpenGL filter (Sharp-Bilinear -> Nearest -> CRT)
 - `F10`: Toggle integer scaling (OpenGL)

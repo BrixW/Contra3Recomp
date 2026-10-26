@@ -26,6 +26,7 @@ $Sources = @(
     "snes_movie",
     "snes_savestate",
     "snes_rom",
+    "contra3_extras",
     "bank_00",
     "bank_01",
     "bank_02",
@@ -56,7 +57,8 @@ if (Test-Path $AppSrc) {
     $AppExe = Join-Path $BuildDir "contra3.exe"
     Write-Host "[LD] build/contra3.exe"
     $GlSrc = Join-Path $RootDir "src\win32_gl.c"
-    & $Gcc -std=c11 -O2 -Wall -Wextra -Werror -I"$RootDir\include" $AppSrc $GlSrc $LibPath -lopengl32 -lgdi32 -lwinmm -lcomdlg32 -o $AppExe
+    $CfgSrc = Join-Path $RootDir "src\win32_config.c"
+    & $Gcc -std=c11 -O2 -Wall -Wextra -Werror -I"$RootDir\include" $AppSrc $GlSrc $CfgSrc $LibPath -lopengl32 -lgdi32 -lwinmm -lcomdlg32 -o $AppExe
     if ($LASTEXITCODE -ne 0) { throw "Desktop app build failed" }
 }
 

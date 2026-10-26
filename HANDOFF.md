@@ -63,10 +63,11 @@ Verified end-to-end with zero compiler warnings (`gcc -std=c11 -O2 -Wall -Wextra
 ### A3. CPU/APU synchronisation (done)
 The SPC700 now runs on the CPU's timeline (`snes_apu_sync` before every `$2140–$2143` access, plus every frame boundary), so upload handshakes and loads take real time. The emulator comparison in §A/§A2 is also the way to validate load durations: Stage 1 intro card about 4 s, power-on about 2 s with `--lag-model`.
 
-### B. Optional polish
-- **Persistent cartridge config**: save/load `ctx.wram[0x1E00..0x1FFF]` to `contra3_nvram.bin`.
-- **Restore *Contra Spirits* cheats**: expose Sound Test (`bank00_func_b2f3`), 30 Lives (`bank00_func_b346`) and Stage Select (`bank00_func_b39f`).
-- **Vulkan presenter**: not needed for parity; the OpenGL path covers GPU scaling, VSync and shaders.
+### B. Polish status
+- **Done**: key rebinding and P2 keyboard (`contra3.ini`), persisted video and lag-model preferences, the restored STAGE SELECT screen (`--stage-select` / F4) and 30 lives (`--30-lives`) via `src/contra3_extras.c`.
+- **Not possible**: the *Contra Spirits* Sound Test. Only its code detector (`$00:B2F3`) survives, and the screen itself isn't in the US ROM. The code tables at `$05:86D3+` were overwritten and the detectors' `$1C08–$1C13` state is reused by other screens, so the effects are applied directly rather than re-enabling the detectors.
+- **Deliberately skipped**: battery-style persistence of `$1E00–$1FFF`. The cartridge has no SRAM, and that block mixes options with PPU shadows, Mode 7 buffers and the `KONAMI` warm-boot signature, so restoring it at power-on would change boot behaviour. Persisting just the option-menu lives and difficulty through `contra3.ini` would be the safe variant if wanted.
+- **Optional**: a Vulkan presenter (OpenGL already covers scaling, VSync and shaders).
 
 ---
 
