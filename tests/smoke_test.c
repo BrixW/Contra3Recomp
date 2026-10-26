@@ -12,6 +12,7 @@
 #include "snes_movie.h"
 #include "snes_savestate.h"
 #include "snes_rom.h"
+#include "contra3_extras.h"
 
 #define TEST_ASSERT(cond, msg)                                                      \
     do {                                                                            \
@@ -367,6 +368,53 @@ int main(int argc, char **argv) {
         free(img);
         remove(path);
         printf("[PASS] Save states verified: round trip exact, truncated / corrupt / version / magic / ROM mismatches rejected.\n");
+    }
+
+    /* 11. Extras: OPTION MODE restore (lives / difficulty / deferred mono), start stage, infinite lives */
+    {
+        static SnesCpuContext ex_ctx;
+        static SnesApu        ex_apu;
+        static int16_t        ex_pcm[8192 * 2];
+        double lr_diff[2] = { 0.0, 0.0 };
+        for (unsigned run = 0u; run < 2u; ++run) {
+            snes_context_init(&ex_ctx, rom, rom_size);
+            snes_apu_init(&ex_apu);
+            snes_apu_attach(&ex_ctx, &ex_apu);
+            ex_ctx.max_main_loop_iters = 1u;
+            bank00_func_8000(&ex_ctx);
+            Contra3Extras ex = { CONTRA3_UNLOCK_INFINITE_LIVES, 3u, false, -1, 0u };
+            Contra3Options o = { 5u, 4u, run ? 2u : 0u };
+            contra3_options_restore(&ex_ctx, &o, &ex);
+            double diff = 0.0, energy = 0.0;
+            for (unsigned fr = 1u; fr <= 2400u; ++fr) {
+                uint16_t pad = 0u;
+                if ((fr >= 620u && fr <= 625u) || (ex_ctx.wram[0x32] == 3u && fr > 760u && (fr % 40u) < 5u)) {
+                    pad = SNES_BTN_START;
+                }
+                snes_step_frame(&ex_ctx, pad, 0u, NULL);
+                contra3_extras_apply(&ex_ctx, &ex);
+                size_t k;
+                while ((k = snes_apu_pop_samples(&ex_apu, ex_pcm, 8192u)) > 0u) {
+                    if (ex_ctx.wram[0x32] != 9u) {
+                        continue;
+                    }
+                    for (size_t i = 0u; i < k; ++i) {
+                        double l = ex_pcm[2u * i], r = ex_pcm[2u * i + 1u];
+                        diff += (l - r) * (l - r);
+                        energy += l * l + r * r;
+                    }
+                }
+            }
+            lr_diff[run] = (energy > 0.0) ? diff / energy : 0.0;
+            TEST_ASSERT(ex_ctx.wram[0x32] == 9u && snes_bus_read16(&ex_ctx, 0x000086u) == 3u,
+                        "start_stage = 3 began the first game at Stage 3");
+            TEST_ASSERT(snes_bus_read16(&ex_ctx, 0x001E3Eu) == 4u, "Restored LEVEL = hard");
+            TEST_ASSERT(snes_bus_read16(&ex_ctx, 0x001F8Au) >= 2u, "Infinite lives kept P1 at >= 2 lives");
+        }
+        TEST_ASSERT(lr_diff[0] > 0.03 && lr_diff[1] < lr_diff[0] * 0.25,
+                    "Restored SOUND = mono collapsed the stereo image (deferred driver command)");
+        printf("[PASS] Extras verified: options restore (hard, mono L/R diff %.4f vs stereo %.4f), start stage 3, infinite lives.\n",
+               lr_diff[1], lr_diff[0]);
     }
 
     free(rom);

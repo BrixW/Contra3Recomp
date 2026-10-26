@@ -280,6 +280,8 @@ static void set_status(HWND hwnd, const char *msg) {
     SetWindowTextA(hwnd, msg);
 }
 
+static Contra3Config g_config;
+
 static uint16_t poll_xinput_pad(DWORD index) {
     if (g_xinput_get_state == NULL) {
         return 0u;
@@ -289,24 +291,17 @@ static uint16_t poll_xinput_pad(DWORD index) {
     if (g_xinput_get_state(index, &st) != ERROR_SUCCESS) {
         return 0u;
     }
+    /* D-pad and left stick always steer; face buttons, shoulders, triggers, Back/Start follow [gamepad] */
     uint16_t mask = 0u;
     WORD b = st.Gamepad.wButtons;
-    if ((b & XINPUT_BTN_DPAD_UP)    || st.Gamepad.sThumbLY >  12000) mask |= SNES_BTN_UP;
-    if ((b & XINPUT_BTN_DPAD_DOWN)  || st.Gamepad.sThumbLY < -12000) mask |= SNES_BTN_DOWN;
-    if ((b & XINPUT_BTN_DPAD_LEFT)  || st.Gamepad.sThumbLX < -12000) mask |= SNES_BTN_LEFT;
-    if ((b & XINPUT_BTN_DPAD_RIGHT) || st.Gamepad.sThumbLX >  12000) mask |= SNES_BTN_RIGHT;
-    if (b & XINPUT_BTN_START)          mask |= SNES_BTN_START;
-    if (b & XINPUT_BTN_BACK)           mask |= SNES_BTN_SELECT;
-    if (b & XINPUT_BTN_A)              mask |= SNES_BTN_B; /* Xbox A -> SNES B (Jump) */
-    if (b & XINPUT_BTN_X)              mask |= SNES_BTN_Y; /* Xbox X -> SNES Y (Shoot) */
-    if (b & XINPUT_BTN_B)              mask |= SNES_BTN_A; /* Xbox B -> SNES A (Bomb) */
-    if (b & XINPUT_BTN_Y)              mask |= SNES_BTN_X; /* Xbox Y -> SNES X (Switch) */
-    if ((b & XINPUT_BTN_LEFT_SHOULDER)  || st.Gamepad.bLeftTrigger  > 64u) mask |= SNES_BTN_L;
-    if ((b & XINPUT_BTN_RIGHT_SHOULDER) || st.Gamepad.bRightTrigger > 64u) mask |= SNES_BTN_R;
+    int dz = g_config.pad_deadzone;
+    if ((b & XINPUT_BTN_DPAD_UP)    || st.Gamepad.sThumbLY >  dz) mask |= SNES_BTN_UP;
+    if ((b & XINPUT_BTN_DPAD_DOWN)  || st.Gamepad.sThumbLY < -dz) mask |= SNES_BTN_DOWN;
+    if ((b & XINPUT_BTN_DPAD_LEFT)  || st.Gamepad.sThumbLX < -dz) mask |= SNES_BTN_LEFT;
+    if ((b & XINPUT_BTN_DPAD_RIGHT) || st.Gamepad.sThumbLX >  dz) mask |= SNES_BTN_RIGHT;
+    mask |= contra3_config_map_pad(&g_config, b, st.Gamepad.bLeftTrigger, st.Gamepad.bRightTrigger);
     return mask;
 }
-
-static Contra3Config g_config;
 
 static uint16_t poll_keyboard_pad(HWND hwnd, unsigned player) {
     if (GetForegroundWindow() != hwnd) {
@@ -399,7 +394,94 @@ static void soft_reset(SnesCpuContext *ctx, SnesApu *apu) {
 
 static bool     g_strict_fallback = false;
 static uint32_t g_lag_budget      = 0u;   /* CPU cycles per frame for the lag model (0 = off) */
-static unsigned g_unlocks         = 0u;   /* CONTRA3_UNLOCK_* (restored Contra Spirits features) */
+static Contra3Extras g_extras = { 0u, 0u, false, -1, 0u }; /* restored Contra Spirits features + host extras */
+
+/* Interactive key rebinding (F2 = Player 1, Shift+F2 = Player 2) */
+static int      g_rebind_player = -1;
+static unsigned g_rebind_button = 0u;
+static uint8_t  g_rebind_backup[CFG_BUTTONS][CFG_KEYS_PER_BTN];
+static char     g_rebind_prompt[200];
+
+static void rebind_prompt(HWND hwnd) {
+    char cur[48] = "";
+    for (unsigned k = 0u; k < CFG_KEYS_PER_BTN && g_config.keys[g_rebind_player][g_rebind_button][k] != 0u; ++k) {
+        char name[16];
+        contra3_config_key_name(g_config.keys[g_rebind_player][g_rebind_button][k], name, sizeof(name));
+        size_t len = strlen(cur);
+        snprintf(cur + len, sizeof(cur) - len, "%s%s", k ? ", " : "", name);
+    }
+    snprintf(g_rebind_prompt, sizeof(g_rebind_prompt),
+             "Player %d controls %u/%u: press a key for %s  [now: %s]  (Esc = keep, F2 = cancel)",
+             g_rebind_player + 1, g_rebind_button + 1u, (unsigned)CFG_BUTTONS,
+             contra3_config_button_label(g_rebind_button), cur[0] ? cur : "none");
+    SetWindowTextA(hwnd, g_rebind_prompt);
+}
+
+static void rebind_start(HWND hwnd, int player) {
+    g_rebind_player = player;
+    g_rebind_button = 0u;
+    memcpy(g_rebind_backup, g_config.keys[player], sizeof(g_rebind_backup));
+    rebind_prompt(hwnd);
+}
+
+/* Distinguish left/right Shift, Ctrl and Alt, which WM_KEYDOWN reports generically */
+static uint8_t resolve_vk(WPARAM wparam, LPARAM lparam) {
+    bool extended = (lparam & (1 << 24)) != 0;
+    if (wparam == VK_SHIFT) {
+        return (uint8_t)MapVirtualKeyA((UINT)((lparam >> 16) & 0xFF), MAPVK_VSC_TO_VK_EX);
+    }
+    if (wparam == VK_CONTROL) {
+        return extended ? VK_RCONTROL : VK_LCONTROL;
+    }
+    if (wparam == VK_MENU) {
+        return extended ? VK_RMENU : VK_LMENU;
+    }
+    return (uint8_t)wparam;
+}
+
+/* Returns true when the key was consumed by the rebinding flow */
+static bool rebind_handle_key(HWND hwnd, WPARAM wparam, LPARAM lparam) {
+    if (g_rebind_player < 0) {
+        return false;
+    }
+    if (wparam == VK_F2) {
+        memcpy(g_config.keys[g_rebind_player], g_rebind_backup, sizeof(g_rebind_backup));
+        g_rebind_player = -1;
+        set_status(hwnd, "Key rebinding cancelled");
+        return true;
+    }
+    if (wparam != VK_ESCAPE) {
+        uint8_t vk = resolve_vk(wparam, lparam);
+        if (!contra3_config_key_supported(vk) || (vk >= VK_F1 && vk <= VK_F24)) {
+            SetWindowTextA(hwnd, "That key can't be bound - press another (Esc = keep, F2 = cancel)");
+            return true;
+        }
+        /* One key per button from the wizard; a key moves away from any other button of this player */
+        for (unsigned b = 0u; b < CFG_BUTTONS; ++b) {
+            for (unsigned k = 0u; k < CFG_KEYS_PER_BTN; ++k) {
+                if (g_config.keys[g_rebind_player][b][k] == vk) {
+                    memmove(&g_config.keys[g_rebind_player][b][k], &g_config.keys[g_rebind_player][b][k + 1u],
+                            CFG_KEYS_PER_BTN - 1u - k);
+                    g_config.keys[g_rebind_player][b][CFG_KEYS_PER_BTN - 1u] = 0u;
+                    k--;
+                }
+            }
+        }
+        memset(g_config.keys[g_rebind_player][g_rebind_button], 0, CFG_KEYS_PER_BTN);
+        g_config.keys[g_rebind_player][g_rebind_button][0] = vk;
+    }
+    if (++g_rebind_button >= CFG_BUTTONS) {
+        char msg[96];
+        bool saved = contra3_config_save(&g_config);
+        snprintf(msg, sizeof(msg), "Player %d controls %s", g_rebind_player + 1,
+                 saved ? "saved to contra3.ini" : "updated (contra3.ini could not be written)");
+        g_rebind_player = -1;
+        set_status(hwnd, msg);
+    } else {
+        rebind_prompt(hwnd);
+    }
+    return true;
+}
 static uint32_t g_frame_number    = 0u;   /* Frames stepped since launch (for diagnostics) */
 
 /* Report every unresolved indirect target immediately, with the dispatch site and frame */
@@ -480,6 +562,9 @@ static LRESULT CALLBACK contra3_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPAR
             return 0;
         }
         case WM_SYSKEYDOWN:
+            if ((lparam & 0x40000000) == 0 && rebind_handle_key(hwnd, wparam, lparam)) {
+                return 0;
+            }
             if (wparam == VK_RETURN && (lparam & (1 << 29)) != 0) {
                 toggle_fullscreen(hwnd);
                 return 0;
@@ -487,8 +572,14 @@ static LRESULT CALLBACK contra3_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPAR
             break;
         case WM_KEYDOWN: {
             bool repeat = (lparam & 0x40000000) != 0;
+            if (!repeat && rebind_handle_key(hwnd, wparam, lparam)) {
+                return 0;
+            }
             if (!repeat) {
-                if (wparam == VK_ESCAPE) {
+                bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+                if (wparam == VK_F2) {
+                    rebind_start(hwnd, shift ? 1 : 0);
+                } else if (wparam == VK_ESCAPE) {
                     g_running = false;
                     DestroyWindow(hwnd);
                     return 0;
@@ -506,9 +597,13 @@ static LRESULT CALLBACK contra3_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPAR
                     }
                 } else if (wparam == VK_SPACE && g_paused) {
                     g_step_once = true;
+                } else if (wparam == VK_F4 && shift) {
+                    g_extras.flags ^= CONTRA3_UNLOCK_INFINITE_LIVES;
+                    set_status(hwnd, (g_extras.flags & CONTRA3_UNLOCK_INFINITE_LIVES)
+                                         ? "Infinite lives ON" : "Infinite lives OFF");
                 } else if (wparam == VK_F4) {
-                    g_unlocks ^= CONTRA3_UNLOCK_STAGE_SELECT;
-                    set_status(hwnd, (g_unlocks & CONTRA3_UNLOCK_STAGE_SELECT)
+                    g_extras.flags ^= CONTRA3_UNLOCK_STAGE_SELECT;
+                    set_status(hwnd, (g_extras.flags & CONTRA3_UNLOCK_STAGE_SELECT)
                                          ? "Stage select ON (press START on the title screen)" : "Stage select OFF");
                 } else if (wparam == VK_F3) {
                     g_lag_budget = (g_lag_budget != 0u) ? 0u : SNES_LAG_BUDGET_DEFAULT;
@@ -889,7 +984,7 @@ static int run_headless(const uint8_t *rom, size_t rom_size, const HeadlessOptio
 
         g_frame_number++;
         snes_step_frame(&g_ctx, pad1, pad2, need_render ? g_framebuf : NULL);
-        contra3_apply_unlocks(&g_ctx, g_unlocks);
+        contra3_extras_apply(&g_ctx, &g_extras);
         snes_movie_record_frame(&rec, pad1, pad2, flags);
 
         snes_apu_clear_samples(&g_apu);
@@ -1175,6 +1270,8 @@ static void print_usage(void) {
         "  --hang-frames <n>         Frames without a logic-frame tick that count as a hang (default 600)\n"
         "  --strict                  Abort with a register dump on the first unresolved indirect jump\n"
         "  --stage-select            Restore Konami's STAGE SELECT screen (START on the title; F4 toggles)\n"
+        "  --start-stage <1-6>       First game started from the title begins at that stage\n"
+        "  --infinite-lives-cheat    Lives never drop below 2 during play (Shift+F4)\n"
         "  --30-lives                Start with 30 lives (restored Contra Spirits code effect)\n"
         "  --lag-model [cycles]      Authentic slowdown: drop logic frames when an NMI overruns its CPU budget (F3)\n"
         "  --infinite-lives          Refill a player's lives when they reach the last one (soak testing)\n"
@@ -1187,7 +1284,7 @@ int main(int argc, char **argv) {
     const char *lag_path = NULL;
     bool headless = false;
     bool force_gdi = false;
-    bool cli_filter = false, cli_integer = false, cli_vsync = false, cli_lag = false;
+    bool cli_filter = false, cli_integer = false, cli_vsync = false, cli_lag = false, cli_start_stage = false;
     const char *gl_selftest = NULL;
     ScriptPress presses[64];
     ScriptDump dumps[64];
@@ -1248,9 +1345,15 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--verify") == 0) {
             opt.verify = true;
         } else if (strcmp(argv[i], "--stage-select") == 0) {
-            g_unlocks |= CONTRA3_UNLOCK_STAGE_SELECT;
+            g_extras.flags |= CONTRA3_UNLOCK_STAGE_SELECT;
         } else if (strcmp(argv[i], "--30-lives") == 0) {
-            g_unlocks |= CONTRA3_UNLOCK_LIVES_30;
+            g_extras.flags |= CONTRA3_UNLOCK_LIVES_30;
+        } else if (strcmp(argv[i], "--infinite-lives-cheat") == 0) {
+            g_extras.flags |= CONTRA3_UNLOCK_INFINITE_LIVES;
+        } else if (strcmp(argv[i], "--start-stage") == 0 && i + 1 < argc) {
+            unsigned st = (unsigned)strtoul(argv[++i], NULL, 10);
+            g_extras.start_stage = (st >= 1u && st <= 6u) ? st : 0u;
+            cli_start_stage = true;
         } else if (strcmp(argv[i], "--lag-model") == 0) {
             /* Optional numeric budget may follow: --lag-model 45642 */
             g_lag_budget = SNES_LAG_BUDGET_DEFAULT;
@@ -1375,6 +1478,12 @@ int main(int argc, char **argv) {
     if (!cli_lag) {
         g_lag_budget = g_config.lag_model ? SNES_LAG_BUDGET_DEFAULT : 0u;
     }
+    if (g_config.stage_select)   g_extras.flags |= CONTRA3_UNLOCK_STAGE_SELECT;
+    if (g_config.lives_30)       g_extras.flags |= CONTRA3_UNLOCK_LIVES_30;
+    if (g_config.infinite_lives) g_extras.flags |= CONTRA3_UNLOCK_INFINITE_LIVES;
+    if (!cli_start_stage)        g_extras.start_stage = g_config.start_stage;
+    const Contra3Config config_at_start = g_config;
+    const unsigned extras_at_start = g_extras.flags;
     const Win32GlFilter start_filter = g_gl_filter;
     const bool start_integer = g_integer_scale;
     const uint32_t start_lag = g_lag_budget;
@@ -1382,6 +1491,11 @@ int main(int argc, char **argv) {
     win32_audio_init();
     power_on(&g_ctx, &g_apu, rom, rom_size);
     g_movie_frame = (opt.movie_offset > 0) ? (uint32_t)opt.movie_offset : 0u;
+    /* Saved OPTION MODE settings; skipped for movies, which must start from a pristine power-on */
+    if (g_config.have_options && !g_movie_active) {
+        Contra3Options o = { g_config.opt_lives, g_config.opt_difficulty, g_config.opt_sound };
+        contra3_options_restore(&g_ctx, &o, &g_extras);
+    }
 
     const char *cls_name = "Contra3RecompWndClass";
     WNDCLASSEXA wc;
@@ -1452,7 +1566,7 @@ int main(int argc, char **argv) {
 
         bool turbo = g_turbo_toggle || ((GetForegroundWindow() == hwnd) && ((GetAsyncKeyState(VK_TAB) & 0x8000) != 0));
 
-        if (!g_paused || g_step_once) {
+        if ((!g_paused || g_step_once) && g_rebind_player < 0) {
             uint16_t pad1, pad2;
             uint8_t  flags = g_rec_pending_flags;
             g_rec_pending_flags = 0u;
@@ -1474,7 +1588,7 @@ int main(int argc, char **argv) {
             }
             g_frame_number++;
             snes_step_frame(&g_ctx, pad1, pad2, g_framebuf);
-            contra3_apply_unlocks(&g_ctx, g_unlocks);
+            contra3_extras_apply(&g_ctx, &g_extras);
             snes_movie_record_frame(&g_recorder, pad1, pad2, flags);
             win32_audio_pump(turbo, false);
             g_step_once = false;
@@ -1512,7 +1626,7 @@ int main(int argc, char **argv) {
                 size_t len = strlen(title);
                 snprintf(title + len, sizeof(title) - len, " | %s", g_status);
             }
-            SetWindowTextA(hwnd, title);
+            SetWindowTextA(hwnd, (g_rebind_player >= 0) ? g_rebind_prompt : title);
             fps_timer = now;
             frames_this_sec = 0u;
         }
@@ -1537,12 +1651,36 @@ int main(int argc, char **argv) {
     }
 
     timeEndPeriod(1u);
-    if (g_gl_filter != start_filter || g_integer_scale != start_integer || (g_lag_budget != 0u) != (start_lag != 0u)) {
-        static const char *const filter_names[] = { "sharp", "nearest", "crt" };
-        snprintf(g_config.filter, sizeof(g_config.filter), "%s", filter_names[g_gl_filter]);
-        g_config.integer_scale = g_integer_scale;
-        g_config.lag_model = g_lag_budget != 0u;
-        contra3_config_save(&g_config);
+    {
+        /* Persist runtime changes: video/lag toggles, extras toggles, and the OPTION MODE values */
+        if (g_gl_filter != start_filter || g_integer_scale != start_integer || (g_lag_budget != 0u) != (start_lag != 0u)) {
+            static const char *const filter_names[] = { "sharp", "nearest", "crt" };
+            snprintf(g_config.filter, sizeof(g_config.filter), "%s", filter_names[g_gl_filter]);
+            g_config.integer_scale = g_integer_scale;
+            g_config.lag_model = g_lag_budget != 0u;
+        }
+        if (g_extras.flags != extras_at_start) {
+            g_config.stage_select   = (g_extras.flags & CONTRA3_UNLOCK_STAGE_SELECT) != 0u;
+            g_config.infinite_lives = (g_extras.flags & CONTRA3_UNLOCK_INFINITE_LIVES) != 0u;
+        }
+        if (g_recorder.fp == NULL && !g_movie_active) {
+            Contra3Options o;
+            contra3_options_read(&g_ctx, &o);
+            bool lives_cheat = (g_extras.flags & CONTRA3_UNLOCK_LIVES_30) != 0u;
+            if (o.lives >= 1u && o.lives <= 99u && (o.sound == 0u || o.sound == 2u) && o.difficulty <= 0x0Eu) {
+                if (!lives_cheat) {
+                    g_config.opt_lives = o.lives;
+                } else if (!g_config.have_options) {
+                    g_config.opt_lives = 3u;
+                }
+                g_config.opt_difficulty = o.difficulty;
+                g_config.opt_sound = o.sound;
+                g_config.have_options = true;
+            }
+        }
+        if (memcmp(&g_config, &config_at_start, sizeof(g_config)) != 0) {
+            contra3_config_save(&g_config);
+        }
     }
     snes_movie_record_end(&g_recorder);
     win32_audio_shutdown();

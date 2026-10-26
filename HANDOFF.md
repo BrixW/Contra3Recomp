@@ -18,7 +18,7 @@
 
 ## 2. Visual, Audio & Functional Verification Summary
 
-Verified end-to-end with zero compiler warnings (`gcc -std=c11 -O2 -Wall -Wextra -Werror`), `9/9` smoke tests, visual `.bmp` frame inspection, and audible + waveform checks:
+Verified end-to-end with zero compiler warnings (`gcc -std=c11 -O2 -Wall -Wextra -Werror`), `11/11` smoke tests, visual `.bmp` frame inspection, and audible + waveform checks:
 1. **Cold Boot & Konami Logo (`Frames 1–300`)**: `"KONAMI"` SRAM initialization, 64-byte Sony IPL upload of Konami's SPC700 driver (`ARAM $0200` -> `$0896`), laser-beam HDMA window scan, Konami logo fade-in/out and chime.
 2. **Intro Cinematic & Title Screen**: `"A.D. 2636"` color-math text over the parallax skyline, orchestral intro theme, and the Mode 7 / Mode 1 HDMA-split title screen.
 3. **All six stages, 1P and 2P**: `tools/soak_all_stages.py --frames 54000 --seeds 3` ran 36 runs (stages 1–6 × 1P/2P × 3 bot seeds, 1,944,000 frames ≈ 9 hours of gameplay, ~8,000 FPS): **36/36 clean, `0` unresolved jumps, `0` hangs**. The bot cleared Stage 1 into Stage 2 in all 6 Stage 1 runs and Stage 4 into Stage 5 in 4 of 6 runs, so stage-clear tallies, game-over/continue states (`$0B`/`$0C`) and next-stage loads are exercised as well. No run reached the Stage 6 final boss or the ending (state `$0E`); that needs a real playthrough movie (§4A).
@@ -64,9 +64,10 @@ Verified end-to-end with zero compiler warnings (`gcc -std=c11 -O2 -Wall -Wextra
 The SPC700 now runs on the CPU's timeline (`snes_apu_sync` before every `$2140–$2143` access, plus every frame boundary), so upload handshakes and loads take real time. The emulator comparison in §A/§A2 is also the way to validate load durations: Stage 1 intro card about 4 s, power-on about 2 s with `--lag-model`.
 
 ### B. Polish status
-- **Done**: key rebinding and P2 keyboard (`contra3.ini`), persisted video and lag-model preferences, the restored STAGE SELECT screen (`--stage-select` / F4) and 30 lives (`--30-lives`) via `src/contra3_extras.c`.
+- **Done**: `contra3.ini` with key rebinding for both players (in-window wizard on F2 / Shift+F2), gamepad remapping and deadzone, persisted video, lag-model and extras preferences, and the in-game OPTION MODE settings saved and restored across restarts. Extras in `src/contra3_extras.c`: the restored STAGE SELECT screen (`--stage-select` / F4), 30 lives (`--30-lives`), infinite lives (`--infinite-lives-cheat` / Shift+F4) and start stage (`--start-stage N`). Smoke test 11 covers the options restore (including mono sound), start stage and infinite lives.
 - **Not possible**: the *Contra Spirits* Sound Test. Only its code detector (`$00:B2F3`) survives, and the screen itself isn't in the US ROM. The code tables at `$05:86D3+` were overwritten and the detectors' `$1C08–$1C13` state is reused by other screens, so the effects are applied directly rather than re-enabling the detectors.
-- **Deliberately skipped**: battery-style persistence of `$1E00–$1FFF`. The cartridge has no SRAM, and that block mixes options with PPU shadows, Mode 7 buffers and the `KONAMI` warm-boot signature, so restoring it at power-on would change boot behaviour. Persisting just the option-menu lives and difficulty through `contra3.ini` would be the safe variant if wanted.
+- **Deliberately skipped**: battery-style persistence of the whole `$1E00–$1FFF` block. The cartridge has no SRAM, and that block mixes options with PPU shadows, Mode 7 buffers and the `KONAMI` warm-boot signature. Only the three OPTION MODE values are persisted instead (`[options]`).
+- **Sound-mode gotcha**: stereo/mono reaches the SPC700 driver as command `$7E`/`$7F` (`$00:868F` queue, table `$05:892A`). The driver ignores it until the title music is running: sent on the first title frame, or by the game's own re-send at stage start, it has no effect. The restore therefore queues it after 30 title frames (`Contra3Extras.sound_pending`).
 - **Optional**: a Vulkan presenter (OpenGL already covers scaling, VSync and shaders).
 
 ---

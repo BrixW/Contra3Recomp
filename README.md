@@ -85,7 +85,7 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 Produces:
 - `build\libcontra3_recomp.a` — Portable static C11 game + runtime + PPU + APU library
 - `build\contra3.exe` — Interactive Win32 desktop executable (OpenGL 3.3 / GDI, `60.0988 Hz` video + `48 kHz` cubic-upsampled stereo audio) & headless CLI
-- `build\contra3_smoke_test.exe` — Automated verification test suite (`9/9` checks)
+- `build\contra3_smoke_test.exe` — Automated verification test suite (`11/11` checks)
 
 ### Option 2: CMake + Ninja
 ```powershell
@@ -119,12 +119,19 @@ If none is found when launching the desktop app, it opens a file picker. Images 
 | Start / Pause | `Start` | `Enter` | `Start` |
 | Select | `Select` | `Right Shift` or `Backspace` | `Back` |
 
-All keyboard bindings live in `contra3.ini` next to `contra3.exe`. It is created with the defaults above on first run, takes up to four keys per button, and also stores the filter, integer-scaling, VSync and lag-model preferences; command-line options override it. **Player 2** can use the keyboard too: the numpad by default (`8/5/4/6` D-pad, `1` jump, `2` shoot, `3` switch, `0` bomb, `7`/`9` L/R, `+` Start, `-` Select), as well as XInput pad 2. Pressing opposite directions together cancels them, as on a real D-pad.
+All settings live in `contra3.ini` next to `contra3.exe`. It's created with the defaults on first run and saved on exit when anything changed; command-line options override it. Sections:
+- `[p1]` / `[p2]`: up to four keys per button. **Player 2** defaults to the numpad (`8/5/4/6` D-pad, `1` jump, `2` shoot, `3` switch, `0` bomb, `7`/`9` L/R, `+` Start, `-` Select). Pressing opposite directions together cancels them, as on a real D-pad.
+- **In-window rebinding**: `F2` (Player 1) or `Shift+F2` (Player 2) pauses the game and asks for each button in turn in the title bar. Esc keeps the current key and `F2` cancels; the result is saved straight away. A key taken from another button is removed from it.
+- `[gamepad]`: remaps XInput `a b x y lb rb lt rt back start` to any SNES button (or `none`) for both pads, plus the stick `deadzone`. The D-pad and left stick always steer.
+- `[options]`: the in-game OPTION MODE values (PLAYER lives 3/5/7, LEVEL easy/normal/hard, SOUND stereo/mono). They're saved when you quit and restored at power-on, so they survive restarts like the console's warm-reset memory does within a session. Movie playback and recording always start from the game's defaults, so movies stay reproducible.
+- `[video]`, `[game]`, `[extras]`: filter, integer scaling, VSync, lag model, and the toggles below.
 
 ### Application Hotkeys
 - `Tab` (hold) / `F1` (toggle): Uncapped Turbo Fast-Forward
 - `F3`: Toggle authentic slowdown (the CPU-time lag model, see below)
 - `F4`: Toggle the restored **STAGE SELECT** screen (press START on the title screen; UP/DOWN choose 1–6). Also `--stage-select`, and `--30-lives` for 30 starting lives. These are the effects of *Contra Spirits* (Japan) codes whose detectors were disconnected in the US release.
+- `Shift+F4`: Toggle infinite lives (`--infinite-lives-cheat`): during play, every player in the game keeps at least 2 lives.
+- `--start-stage <1-6>` (or `start_stage` in `[extras]`): the first game started from each title visit begins at that stage. Combined with stage select, it sets where the cursor starts.
 - `F6`: Start / stop recording an input movie (`contra3_rec_XXXX.c3m`; recording power-cycles the console so the movie replays from power-on)
 - `F9`: Cycle OpenGL filter (Sharp-Bilinear -> Nearest -> CRT)
 - `F10`: Toggle integer scaling (OpenGL)
