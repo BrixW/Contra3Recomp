@@ -25,7 +25,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 import soak_all_stages as soak  # noqa: E402  (movie generator)
 
-EXE = os.path.join(ROOT, "build", "contra3.exe")
+EXE = os.environ.get("CONTRA3_EXE") or os.path.join(
+    ROOT, "build", "contra3.exe" if os.name == "nt" else "contra3")
 COMPARE = os.path.join(ROOT, "tools", "compare_trace.py")
 
 
