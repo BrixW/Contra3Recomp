@@ -28,7 +28,8 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EXE = os.path.join(ROOT, "build", "contra3.exe")
+EXE = os.environ.get("CONTRA3_EXE") or os.path.join(
+    ROOT, "build", "contra3.exe" if os.name == "nt" else "contra3")
 
 B, Y, SELECT, START = 0x8000, 0x4000, 0x2000, 0x1000
 UP, DOWN, LEFT, RIGHT = 0x0800, 0x0400, 0x0200, 0x0100
@@ -180,7 +181,7 @@ def main():
     args = ap.parse_args()
 
     if not os.path.exists(EXE):
-        sys.exit(f"error: {EXE} not found - run build.ps1 first")
+        sys.exit(f"error: {EXE} not found - build the contra3 executable first (or set CONTRA3_EXE)")
     os.makedirs(args.out, exist_ok=True)
 
     results = []

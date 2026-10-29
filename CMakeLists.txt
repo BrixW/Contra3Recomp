@@ -37,6 +37,10 @@ target_include_directories(contra3_recomp PUBLIC
 if(WIN32)
     add_executable(contra3 src/win32_main.c src/win32_gl.c src/win32_config.c)
     target_link_libraries(contra3 PRIVATE contra3_recomp opengl32 gdi32 winmm comdlg32)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(X11 REQUIRED)
+    add_executable(contra3 src/linux_main.c src/linux_config.c)
+    target_link_libraries(contra3 PRIVATE contra3_recomp X11::X11 ${CMAKE_DL_LIBS})
 endif()
 
 enable_testing()

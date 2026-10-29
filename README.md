@@ -55,6 +55,8 @@ Portable C11 static recompilation and standalone Win32 desktop executable for **
 | `src/snes_savestate.c` | Versioned save states: magic, format version, struct-layout fingerprint, ROM + payload checksums, staged load, atomic write |
 | `src/snes_movie.c` | Portable C11 movie decoders (Snes9x SMV, BizHawk BK2 zip/DEFLATE, native C3M) and C3M recorder |
 | `src/win32_main.c` | Win32 interactive desktop runner (OpenGL/GDI + `48 kHz` Catmull-Rom upsampled `waveOut` stereo + dynamic `XInput`), movie playback/recording, and the `--headless` / `--trace` / `--verify` CLI harness |
+| `src/linux_main.c` | Linux interactive runner (X11 + runtime-loaded ALSA), the same movie/headless CLI harness, and keyboard controls |
+| `src/linux_config.c` | Linux `contra3.ini` parser/writer and X11 keysym bindings |
 | `src/win32_gl.c` | OpenGL 3.3 Core presenter (`wglCreateContextAttribsARB`, GLSL Sharp-Bilinear / Nearest / CRT filters, integer scaling, VSync) |
 | `src/bank_00.c` | Statically recompiled **Bank `$00`** (`514` functions, `13,007` instructions — Core Engine, Boot, NMI/IRQ, LZSS, SPC700, Dispatchers) |
 | `src/bank_01.c` | Statically recompiled **Bank `$01`** (`484` functions, `12,457` instructions — Player Controller, Weapons, Projectiles, Stage Enemies) |
@@ -93,6 +95,19 @@ cmake -B build-cmake -G Ninja -DCMAKE_C_COMPILER="Z:/REA/tools/w64devkit/bin/gcc
 cmake --build build-cmake
 ctest --test-dir build-cmake --output-on-failure
 ```
+
+### Option 3: Linux (native X11 + ALSA)
+```bash
+# Fedora: sudo dnf install gcc cmake ninja-build libX11-devel
+# Debian/Ubuntu: sudo apt install build-essential cmake ninja-build libx11-dev
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DCONTRA3_ROM="$PWD/Contra III - The Alien Wars (USA).sfc"
+cmake --build build
+ctest --test-dir build --output-on-failure
+./build/contra3 "Contra III - The Alien Wars (USA).sfc"
+```
+
+The Linux frontend presents the 256x224 framebuffer through a nearest-neighbour integer-scaled X11 window and streams the S-DSP audio to ALSA (loaded at runtime; no ALSA headers are needed). It supports the same headless CLI, movie playback/recording, traces, quicksave/load, pause/turbo/fullscreen/screenshot hotkeys, `contra3.ini` key bindings and the extras. The Windows OpenGL filters/VSync, XInput gamepads and the in-window rebinding wizard are not available in this frontend yet; edit `contra3.ini` to rebind keys. The Python harnesses honour `CONTRA3_EXE` when the binary is not in `build/`.
 
 ### Launching the Game (`build\contra3.exe`)
 ```powershell
